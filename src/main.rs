@@ -141,12 +141,17 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: Vi
     let mut last_refresh = Instant::now();
 
     loop {
+        if app.view_mode == ViewMode::View {
+            view_ui::resolve_zoom(&mut app);
+        }
         terminal.draw(|f| {
             match app.view_mode {
                 ViewMode::Table => ui::render(f, &app),
                 ViewMode::View => view_ui::render(f, &app),
             }
         })?;
+
+        app.advance_tick();
 
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {

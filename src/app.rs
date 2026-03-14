@@ -17,6 +17,10 @@ pub struct App {
     pub effort_level: String,
     pub should_quit: bool,
     pub view_mode: ViewMode,
+    pub tick: u64,
+    pub view_page: usize,
+    pub view_zoomed_room: Option<String>, // room name when zoomed in
+    pub view_zoom_index: Option<usize>,  // pending zoom request from key press
     prev_sessions: HashMap<String, Session>,
 }
 
@@ -29,6 +33,10 @@ impl App {
             effort_level,
             should_quit: false,
             view_mode: ViewMode::Table,
+            tick: 0,
+            view_page: 0,
+            view_zoomed_room: None,
+            view_zoom_index: None,
             prev_sessions: HashMap::new(),
         }
     }
@@ -49,6 +57,10 @@ impl App {
         if self.selected >= self.sessions.len() && !self.sessions.is_empty() {
             self.selected = self.sessions.len() - 1;
         }
+    }
+
+    pub fn advance_tick(&mut self) {
+        self.tick = self.tick.wrapping_add(1);
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
@@ -97,9 +109,32 @@ impl App {
 
     fn handle_key_view(&mut self, key: KeyEvent) {
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
-            KeyCode::Char('v') => self.view_mode = ViewMode::Table,
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                if self.view_zoomed_room.is_some() {
+                    self.view_zoomed_room = None; // zoom out
+                } else {
+                    self.should_quit = true;
+                }
+            }
+            KeyCode::Char('v') => {
+                self.view_zoomed_room = None;
+                self.view_mode = ViewMode::Table;
+            }
             KeyCode::Char('r') => self.refresh(),
+            KeyCode::Char('l') | KeyCode::Right => {
+                self.view_page = self.view_page.saturating_add(1);
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                self.view_page = self.view_page.saturating_sub(1);
+            }
+            // 1-9 to zoom into room by index on current page
+            KeyCode::Char(c @ '1'..='9') => {
+                let idx = (c as usize) - ('1' as usize);
+                // Room name will be resolved by view_ui via view_zoomed_room
+                // Store the index temporarily; view_ui will set the actual room name
+                self.view_zoom_index = Some(idx);
+            }
             _ => {}
         }
     }
