@@ -32,7 +32,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from("Directory"),
         Cell::from("Status"),
         Cell::from("Model"),
-        Cell::from("Tokens"),
+        Cell::from("Context"),
         Cell::from("Last Activity"),
     ])
     .style(
@@ -129,7 +129,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         Constraint::Length(20), // Directory
         Constraint::Length(10), // Status
         Constraint::Length(20), // Model
-        Constraint::Length(14), // Tokens
+        Constraint::Length(14), // Context
         Constraint::Length(14), // Last Activity
     ];
 

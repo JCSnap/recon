@@ -109,7 +109,7 @@ impl App {
                     "model_display": s.model_display(&self.effort_level),
                     "total_input_tokens": s.total_input_tokens,
                     "total_output_tokens": s.total_output_tokens,
-                    "tokens_display": s.token_display(),
+                    "context_display": s.token_display(),
                     "token_ratio": s.token_ratio(),
                     "status": s.status.label(),
                     "pid": s.pid,

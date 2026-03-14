@@ -144,7 +144,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                     Cell::from("Session ID"),
                     Cell::from("Git(Project::Branch)"),
                     Cell::from("Model"),
-                    Cell::from("Tokens"),
+                    Cell::from("Context"),
                     Cell::from("Last Active"),
                 ])
                 .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
@@ -208,7 +208,7 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                     Constraint::Length(12),             // Session ID
                     Constraint::Length(git_col_width),  // Git(Project::Branch)
                     Constraint::Length(14),             // Model
-                    Constraint::Length(14),             // Tokens
+                    Constraint::Length(14),             // Context
                     Constraint::Min(12),               // Last Active
                 ];
 
