@@ -4,7 +4,61 @@ A TUI dashboard for monitoring [Claude Code](https://claude.ai/claude-code) sess
 
 See all your Claude sessions at a glance — what they're working on, which need your attention, and how much context they've consumed.
 
-## Dashboard
+## Views
+
+### Tamagotchi View (`recon view` or press `v`)
+
+A visual dashboard where each agent is a pixel-art creature living in a room. Designed for a side monitor — glance over and instantly see who's working, sleeping, or needs attention.
+
+```
+┌ [1] myapp (3) ───────────────────────┐┌ [2] infra (1) ───────────────────────┐
+│                                      ││                                      │
+│     ▄▀▀▀▀▀▄       ▄▀▀▀▀▄ ▄          ││      ▄▀▀▀▀▀▄                         │
+│    ▀▀▀▀▀▀▀▀▀     ▀▀▀▀▀▀▀▀▄          ││     ▀▀▀▀▀▀▀▀▀                        │
+│    ▀▀ ▀▀ ▀▀▀     ▀▀▀▀▀▀▀▀           ││     ▀▀ ▀▀ ▀▀▀                        │
+│    ▀▀▀▀▀▀▀▀▀     ▀▀▀▀▀▀▀▀           ││     ▀▀▀▀▀▀▀▀▀                        │
+│      ▀   ▀         ▀  ▀             ││       ▀   ▀                           │
+│   api-refactor   write-tests        ││  debug-pipeline                      │
+│    feat/auth      feat/auth         ││       main                           │
+│     Working         Idle            ││      Working                         │
+│   ██░░░░ 45%     ░░░░░░ 8%         ││   █░░░░░ 12%                         │
+│                                      ││                                      │
+│       ▄▀▀▀▀▄                         ││                                      │
+│      ▀▀▀▀▀▀▀▀                        ││                                      │
+│      ▀▀▀▀▀▀▀▀                        ││                                      │
+│      ▀▀▀▀▀▀▀▀                        ││                                      │
+│       ▀▀▀▀▀                          ││                                      │
+│    new-session                       ││                                      │
+│       main                           ││                                      │
+│        New                           ││                                      │
+│     ░░░░░░ 0%                        ││                                      │
+└──────────────────────────────────────┘└──────────────────────────────────────┘
+┌ [3] webapp (1) ──────────────────────┐┌ [4] recon (1) ───────────────────────┐
+│                                      ││                                      │
+│     ▄▀▀▀▀▄ ▄                         ││      ▄▀▀▀▀▀▄                         │
+│    ▀▀▀▀▀▀▀▀▄                         ││     ▀▀▀▀▀▀▀▀▀                        │
+│    ▀▀▀▀▀▀▀▀                          ││     ▀▀ ▀▀ ▀▀▀                        │
+│    ▀▀▀▀▀▀▀▀                          ││     ▀▀▀▀▀▀▀▀▀                        │
+│      ▀  ▀                            ││       ▀   ▀                           │
+│   code-review                        ││      scratch                         │
+│      pr-452                          ││       main                           │
+│       Idle                           ││      Working                         │
+│   █████░ 90%                         ││    ░░░░░░ 3%                         │
+│                                      ││                                      │
+└──────────────────────────────────────┘└──────────────────────────────────────┘
+1-4 zoom  h/l page  v table  r refresh  q quit
+```
+
+In the terminal, creatures are fully colored — green blobs for Working, blue-grey for Idle, cream eggs for New, and pulsing orange for Input. Working and Input creatures animate; Idle and New stay still.
+
+| State | Creature | Color |
+|-------|----------|-------|
+| **Working** | Happy blob with sparkles and feet | Green |
+| **Input** | Angry blob with furrowed brows | Orange (pulsing) |
+| **Idle** | Sleeping blob with Zzz | Blue-grey |
+| **New** | Egg with spots | Cream |
+
+### Table View (default)
 
 ```
 ┌─ recon — Claude Code Sessions ──────────────────────────────────────────────────────────────────────────┐
@@ -16,7 +70,7 @@ See all your Claude sessions at a glance — what they're working on, which need
 │  5  scratch          recon::main            ~/repos/recon      ● Idle  Opus 4.6    3k/1M    10m ago     │
 │  6  new-session      dotfiles::main         ~/repos/dotfiles   ● New   —           —        —           │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-j/k navigate  Enter switch  r refresh  q quit
+j/k navigate  Enter switch  v view  r refresh  q quit
 ```
 
 - **Input** rows are highlighted — these sessions are blocked waiting for your approval
@@ -77,7 +131,8 @@ Requires tmux and [Claude Code](https://claude.ai/claude-code).
 ## Usage
 
 ```bash
-recon                                  # TUI dashboard
+recon                                  # Table dashboard
+recon view                             # Tamagotchi visual dashboard
 recon --json                           # JSON output (for scripting)
 recon launch                           # Create a new claude session in the current directory
 recon new                              # Interactive new session form
@@ -86,14 +141,27 @@ recon --resume <session-id>            # Resume a claude session in a new tmux s
 recon --resume <session-id> --name foo # Resume with a custom tmux session name
 ```
 
-### Keybindings
+### Keybindings — Table View
 
 | Key | Action |
 |---|---|
 | `j` / `k` | Navigate sessions |
 | `Enter` | Switch to selected tmux session |
+| `x` | Kill selected session |
+| `v` | Switch to Tamagotchi view |
 | `r` | Force refresh |
 | `q` / `Esc` | Quit |
+
+### Keybindings — Tamagotchi View
+
+| Key | Action |
+|---|---|
+| `1`-`4` | Zoom into room |
+| `h` / `l` | Previous / next page |
+| `Esc` | Zoom out (or quit) |
+| `v` | Switch to table view |
+| `r` | Force refresh |
+| `q` | Quit |
 
 ## tmux config
 
@@ -112,9 +180,14 @@ This lets you pop open the dashboard from any tmux session, pick a session with 
 ## Features
 
 - **Live status** — polls every 2s, incremental JSONL parsing
+- **Tamagotchi view** — pixel-art creatures with animations, rooms, and context bars
 - **Git-aware** — shows repo name and branch per session
 - **Context tracking** — token usage shown as used/available (e.g. 45k/1M)
 - **Model display** — shows which Claude model and effort level
 - **Resume picker** — `recon resume` scans JSONL files for past sessions, resume any with `Enter`
 - **Multi-session** — handles multiple sessions in the same repo without conflicts
 - **JSON mode** — `recon --json` for scripting and automation
+
+## License
+
+MIT
