@@ -23,6 +23,7 @@ pub fn render(frame: &mut Frame, app: &App) {
 fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from(" # "),
+        Cell::from("Session"),
         Cell::from("Project"),
         Cell::from("Status"),
         Cell::from("Model"),
@@ -40,10 +41,12 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, session)| {
-            let num = match session.tab_number {
-                Some(n) => format!(" {} ", n),
-                None => format!(" {} ", i + 1),
-            };
+            let num = format!(" {} ", i + 1);
+
+            let tmux_name = session
+                .tmux_session
+                .as_deref()
+                .unwrap_or("—");
 
             let status_style = match session.status {
                 SessionStatus::Working => Style::default().fg(Color::Green),
@@ -70,10 +73,8 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
 
             let row = Row::new(vec![
                 Cell::from(num),
-                Cell::from(match &session.tab_title {
-                    Some(title) => format!("[{}] {}", title, session.project_name),
-                    None => session.project_name.clone(),
-                }),
+                Cell::from(tmux_name.to_string()),
+                Cell::from(session.project_name.clone()),
                 Cell::from(session.status.label()).style(status_style),
                 Cell::from(session.model_display(&app.effort_level)),
                 Cell::from(session.token_display()).style(token_style),
@@ -90,6 +91,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
 
     let widths = [
         Constraint::Length(4),
+        Constraint::Length(16),
         Constraint::Min(15),
         Constraint::Length(10),
         Constraint::Length(20),
@@ -112,8 +114,8 @@ fn render_footer(frame: &mut Frame, area: Rect) {
     let footer = Paragraph::new(Line::from(vec![
         Span::styled("j/k", Style::default().fg(Color::Cyan)),
         Span::raw(" navigate  "),
-        Span::styled("Enter/1-9", Style::default().fg(Color::Cyan)),
-        Span::raw(" jump  "),
+        Span::styled("Enter", Style::default().fg(Color::Cyan)),
+        Span::raw(" switch  "),
         Span::styled("r", Style::default().fg(Color::Cyan)),
         Span::raw(" refresh  "),
         Span::styled("q", Style::default().fg(Color::Cyan)),

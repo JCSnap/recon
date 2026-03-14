@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-core-foundation = "0.10"
-core-foundation-sys = "0.8"
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "process"] }

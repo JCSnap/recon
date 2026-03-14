@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::tmux;
+
 #[derive(Debug, Clone)]
 pub struct ClaudeProcess {
     pub pid: i32,
@@ -8,6 +10,7 @@ pub struct ClaudeProcess {
     pub stat: String,
     pub session_id: Option<String>,
     pub cwd: Option<String>,
+    pub tmux_session: Option<String>,
 }
 
 static CWD_CACHE: Mutex<Option<HashMap<i32, String>>> = Mutex::new(None);
@@ -25,7 +28,7 @@ fn set_cached_cwd(pid: i32, cwd: String) {
     cache.as_mut().unwrap().insert(pid, cwd);
 }
 
-/// Discover all running claude processes.
+/// Discover all running claude processes with tmux session mapping.
 pub fn discover_claude_processes() -> Vec<ClaudeProcess> {
     let output = match std::process::Command::new("ps")
         .args(["-eo", "pid,tty,stat,args"])
@@ -36,6 +39,7 @@ pub fn discover_claude_processes() -> Vec<ClaudeProcess> {
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let tty_map = tmux::tty_to_session_map();
     let mut procs = Vec::new();
 
     for line in stdout.lines().skip(1) {
@@ -59,6 +63,7 @@ pub fn discover_claude_processes() -> Vec<ClaudeProcess> {
 
         let session_id = extract_session_id(&args_joined);
         let cwd = get_process_cwd(pid);
+        let tmux_session = tty_map.get(&tty).cloned();
 
         procs.push(ClaudeProcess {
             pid,
@@ -66,6 +71,7 @@ pub fn discover_claude_processes() -> Vec<ClaudeProcess> {
             stat,
             session_id,
             cwd,
+            tmux_session,
         });
     }
 

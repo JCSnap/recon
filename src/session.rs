@@ -30,8 +30,7 @@ impl SessionStatus {
 pub struct Session {
     pub session_id: String,
     pub project_name: String,
-    pub tab_title: Option<String>,
-    pub tab_number: Option<u8>,
+    pub tmux_session: Option<String>,
     pub model: Option<String>,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
@@ -131,8 +130,7 @@ pub fn resolve_sessions(
         sessions.push(Session {
             session_id,
             project_name,
-            tab_title: None,
-            tab_number: None,
+            tmux_session: proc.tmux_session.clone(),
             model: model_id,
             total_input_tokens: input_tokens,
             total_output_tokens: output_tokens,
@@ -161,7 +159,6 @@ fn shorten_path(path: &str) -> String {
 
 /// Encode a CWD path the same way Claude does for project directories.
 /// `/Users/gavra/repos/yaba` -> `-Users-gavra-repos-yaba`
-/// Also replaces `.` (removed) and `_` (to `-`).
 fn encode_project_path(path: &str) -> String {
     path.replace('/', "-").replace('.', "-").replace('_', "-")
 }
@@ -172,14 +169,11 @@ fn find_jsonl(project_dir: &Path, session_id: Option<&str>) -> Option<PathBuf> {
         return None;
     }
 
-    // If we have a session ID, look for exact match
     if let Some(id) = session_id {
         let direct = project_dir.join(format!("{id}.jsonl"));
         if direct.exists() {
             return Some(direct);
         }
-        // Also check in subdirectories (session_id/session_id.jsonl pattern doesn't exist,
-        // but the file is directly in the project dir)
     }
 
     // Otherwise find the most recently modified JSONL
@@ -236,7 +230,6 @@ struct UsageEntry {
 }
 
 /// Parse JSONL file, incrementally if possible.
-/// Returns (total_input, total_output, model, last_activity, file_size).
 fn parse_jsonl(
     path: &Path,
     prev_file_size: u64,
@@ -251,7 +244,6 @@ fn parse_jsonl(
 
     let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
 
-    // If file hasn't changed, return previous values
     if file_size == prev_file_size && prev_file_size > 0 {
         return (prev_input, prev_output, prev_model, None, file_size);
     }
@@ -261,10 +253,7 @@ fn parse_jsonl(
     let mut total_output = prev_output;
     let mut model = prev_model;
     let mut last_activity = None;
-    let mut last_type = String::new();
-    let mut last_subtype: Option<String> = None;
 
-    // Seek to where we left off for incremental reads
     if prev_file_size > 0 {
         let _ = reader.seek(SeekFrom::Start(prev_file_size));
     } else {
@@ -283,20 +272,12 @@ fn parse_jsonl(
         }
 
         let trimmed = line.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || !trimmed.contains("\"type\"") {
             continue;
         }
 
-        // Quick check: only parse lines that might have useful data
-        if !trimmed.contains("\"type\"") {
-            continue;
-        }
-
-        // Track type for status detection
         if trimmed.contains("\"type\":\"assistant\"") {
             if let Ok(entry) = serde_json::from_str::<JsonlEntry>(trimmed) {
-                last_type = entry.r#type;
-                last_subtype = entry.subtype;
                 if let Some(ts) = entry.timestamp {
                     last_activity = Some(ts);
                 }
@@ -305,17 +286,17 @@ fn parse_jsonl(
                         model = Some(m);
                     }
                     if let Some(usage) = msg.usage {
-                        total_input += usage.input_tokens
+                        // Each assistant entry reports total usage for that API call,
+                        // not incremental. Use the latest values, don't sum.
+                        total_input = usage.input_tokens
                             + usage.cache_creation_input_tokens
                             + usage.cache_read_input_tokens;
-                        total_output += usage.output_tokens;
+                        total_output = usage.output_tokens;
                     }
                 }
             }
         } else if trimmed.contains("\"type\":\"user\"") || trimmed.contains("\"type\":\"system\"") {
             if let Ok(entry) = serde_json::from_str::<JsonlEntry>(trimmed) {
-                last_type = entry.r#type;
-                last_subtype = entry.subtype;
                 if let Some(ts) = entry.timestamp {
                     last_activity = Some(ts);
                 }
@@ -323,23 +304,16 @@ fn parse_jsonl(
         }
     }
 
-    // Store last_type/last_subtype info in last_activity for status detection
-    // We'll encode it as a suffix — hacky but avoids changing the return type
-    let _ = (last_type, last_subtype); // used in determine_status via separate path
-
     (total_input, total_output, model, last_activity, file_size)
 }
 
 /// Determine session status from process state.
 fn determine_status(stat: &str, jsonl_path: &Option<PathBuf>, _file_size: u64) -> SessionStatus {
-    // R+ means the process is actively running (Working)
     if stat.contains('R') {
         return SessionStatus::Working;
     }
 
-    // S+ means sleeping — check if awaiting input
     if stat.contains('S') {
-        // Check the last entry type in the JSONL
         if let Some(path) = jsonl_path {
             if let Some(last_type) = read_last_entry_type(path) {
                 if last_type == "turn_duration" {
@@ -355,7 +329,6 @@ fn determine_status(stat: &str, jsonl_path: &Option<PathBuf>, _file_size: u64) -
 /// Read the last meaningful entry type from JSONL (reads from end).
 fn read_last_entry_type(path: &Path) -> Option<String> {
     let content = fs::read_to_string(path).ok()?;
-    // Read from the end to find the last entry
     for line in content.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -371,10 +344,6 @@ fn read_last_entry_type(path: &Path) -> Option<String> {
             return Some("assistant".to_string());
         }
         if trimmed.contains("\"type\":\"system\"") {
-            // Could be turn_duration or something else
-            if trimmed.contains("\"subtype\":\"turn_duration\"") {
-                return Some("turn_duration".to_string());
-            }
             return Some("system".to_string());
         }
     }

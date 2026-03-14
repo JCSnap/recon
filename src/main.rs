@@ -2,9 +2,8 @@ mod app;
 mod model;
 mod process;
 mod session;
+mod tmux;
 mod ui;
-#[allow(dead_code)]
-mod warp;
 
 use std::io;
 use std::time::{Duration, Instant};
@@ -20,22 +19,32 @@ use ratatui::Terminal;
 use app::App;
 
 fn main() -> io::Result<()> {
-    let json_mode = std::env::args().any(|a| a == "--json");
+    let args: Vec<String> = std::env::args().collect();
 
-    if json_mode {
+    if args.get(1).map(|s| s.as_str()) == Some("launch") {
+        let name_only = args.iter().any(|a| a == "--name-only");
+        match tmux::launch_session(name_only) {
+            Ok(name) => {
+                if name_only {
+                    print!("{name}");
+                } else {
+                    eprintln!("Session: {name}");
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        return Ok(());
+    }
+
+    if args.iter().any(|a| a == "--json") {
         let mut app = App::new();
-        app.probe_tabs();
         app.refresh();
         let output = app.to_json();
         println!("{output}");
         return Ok(());
-    }
-
-    // Check accessibility
-    if !warp::is_accessibility_trusted() {
-        eprintln!("WARNING: Not trusted for Accessibility.");
-        eprintln!("  System Settings > Privacy & Security > Accessibility");
-        eprintln!("  Add your terminal app.\n");
     }
 
     // Setup terminal
@@ -61,7 +70,6 @@ fn main() -> io::Result<()> {
 
 fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<()> {
     let mut app = App::new();
-    app.probe_tabs();
     app.refresh();
 
     let refresh_interval = Duration::from_secs(2);
@@ -70,7 +78,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
     loop {
         terminal.draw(|f| ui::render(f, &app))?;
 
-        // Poll for events with 200ms timeout
         if event::poll(Duration::from_millis(200))? {
             if let Event::Key(key) = event::read()? {
                 app.handle_key(key);
@@ -81,7 +88,6 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> io::Result<
             return Ok(());
         }
 
-        // Periodic refresh
         if last_refresh.elapsed() >= refresh_interval {
             app.refresh();
             last_refresh = Instant::now();
