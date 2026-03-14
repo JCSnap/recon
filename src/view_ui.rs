@@ -12,34 +12,239 @@ use crate::app::App;
 use crate::session::{Session, SessionStatus};
 
 // Layout constants
-const ROOMS_PER_PAGE: usize = 4; // fixed 2x2 grid
-const CHAR_WIDTH: u16 = 14;
-const CHAR_ART_HEIGHT: u16 = 5;
-const CHAR_LABEL_LINES: u16 = 4; // session name + branch + status + context bar
-const CHAR_HEIGHT: u16 = CHAR_ART_HEIGHT + CHAR_LABEL_LINES;
+const ROOMS_PER_PAGE: usize = 4;
+const SPRITE_W: usize = 10; // pixel columns
+const SPRITE_H: usize = 10; // pixel rows
+const SPRITE_RENDER_H: u16 = (SPRITE_H as u16 + 1) / 2; // terminal lines for sprite (5)
+const CHAR_WIDTH: u16 = (SPRITE_W as u16) + 4; // sprite + padding
+const CHAR_LABEL_LINES: u16 = 4; // name + branch + status + context bar
+const CHAR_HEIGHT: u16 = SPRITE_RENDER_H + CHAR_LABEL_LINES;
 
-// ── Character art ────────────────────────────────────────────────────
-// Only Working and Input animate. Idle and New are static (calm).
+// ── Pixel sprite data ────────────────────────────────────────────────
+// Each sprite is SPRITE_H rows x SPRITE_W cols. 0 = transparent.
+// Positive values index into the per-state color palette.
+// Only Working and Input have multiple frames (animated).
 
-const CHAR_NEW: [&str; 5] = [
-    "  .---.  ", " / . . \\ ", "|   .   |", " \\ ___ / ", "  '---'  ",
+type Sprite = [[u8; SPRITE_W]; SPRITE_H];
+type Palette = &'static [(u8, u8, u8)]; // index 0 unused (transparent)
+
+// Egg palette: 1=cream shell, 2=shadow, 3=green spots
+const PAL_EGG: &[(u8, u8, u8)] = &[
+    (0, 0, 0),         // 0: unused
+    (255, 250, 230),    // 1: cream shell
+    (220, 200, 170),    // 2: shell shadow
+    (180, 220, 180),    // 3: green spots
 ];
 
-const CHAR_WORKING: [[&str; 5]; 3] = [
-    ["  .---.  ", " / ^.^ \\ ", "|  ===  |", " \\_____/ ", "  d   b  "],
-    ["  .---.  ", " / >.< \\ ", "|  ~~~  |", " \\_____/ ", "  d   b  "],
-    ["  .---.  ", " / ^.^ \\ ", "|> === <|", " \\_____/ ", "  d   b  "],
+const SPRITE_EGG: [Sprite; 1] = [[
+    [0,0,0,0,1,1,1,0,0,0],
+    [0,0,0,1,1,1,1,1,0,0],
+    [0,0,1,1,1,3,1,1,1,0],
+    [0,0,1,1,1,1,1,1,1,0],
+    [0,0,1,3,1,1,1,3,1,0],
+    [0,0,1,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,1,1,1,0],
+    [0,0,0,1,2,1,2,1,0,0],
+    [0,0,0,0,1,1,1,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0],
+]];
+
+// Working palette: 1=green body, 2=dark green, 3=eyes, 4=eye highlight,
+//                  5=blush, 6=mouth, 7=feet, 8=sparkle
+const PAL_WORKING: &[(u8, u8, u8)] = &[
+    (0, 0, 0),
+    (120, 220, 120),    // 1: green body
+    (80, 180, 80),      // 2: darker green
+    (40, 40, 40),       // 3: eyes
+    (255, 255, 255),    // 4: eye highlight
+    (255, 150, 150),    // 5: cheeks
+    (200, 100, 80),     // 6: mouth
+    (100, 200, 100),    // 7: feet
+    (255, 220, 60),     // 8: sparkle
 ];
 
-const CHAR_IDLE: [&str; 5] = [
-    " .---. Zz", " / -.- \\  ", "|  ~~~  | ", " \\_____/  ", "          ",
+const SPRITE_WORKING: [Sprite; 3] = [
+    // Frame 0: happy, sparkles top
+    [
+        [0,0,0,8,1,1,1,8,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,1,3,4,1,1,3,4,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,5,1,1,6,6,1,1,5,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,0,7,0,0,7,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
+    // Frame 1: squinting
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,1,1,3,1,1,3,1,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,5,1,6,1,1,6,1,5,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,7,0,0,0,0,7,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
+    // Frame 2: arms out, sparkles
+    [
+        [0,0,8,1,1,1,1,8,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,1,4,3,1,1,4,3,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,5,1,1,6,6,1,1,5,0],
+        [8,1,1,1,1,1,1,1,1,8],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,0,7,0,0,7,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
 ];
 
-const CHAR_INPUT: [[&str; 5]; 3] = [
-    [" .---. !!", " / O.O \\  ", "|  ___  | ", " \\_____/  ", "  /   \\   "],
-    [" .---.  !", " / o.o \\  ", "|/ ___ \\| ", " \\_____/  ", "  /   \\   "],
-    [" .---. !!", " / @.@ \\  ", "|  !!!  | ", " \\_____/  ", "  /   \\   "],
+// Idle palette: 1=blue-grey body, 2=darker, 3=closed eyes, 4=highlight, 5=feet, 6=Zzz
+const PAL_IDLE: &[(u8, u8, u8)] = &[
+    (0, 0, 0),
+    (140, 160, 200),    // 1: blue-grey body
+    (110, 130, 170),    // 2: darker
+    (60, 60, 80),       // 3: closed eyes
+    (180, 190, 220),    // 4: highlight
+    (120, 140, 180),    // 5: feet
+    (200, 200, 255),    // 6: Zzz
 ];
+
+const SPRITE_IDLE: [Sprite; 1] = [[
+    [0,0,0,1,1,1,1,0,0,0],
+    [0,0,1,1,1,1,1,1,0,6],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,3,3,1,1,3,3,1,6],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,1,1,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,1,1,0,0],
+    [0,0,0,5,0,0,5,0,0,0],
+    [0,0,0,0,0,0,0,0,0,0],
+]];
+
+// Input (angry) palette: 1=orange body, 2=darker, 3=pupils, 4=eye whites,
+//                        5=angry red, 6=feet, 7=flush
+const PAL_INPUT: &[(u8, u8, u8)] = &[
+    (0, 0, 0),
+    (255, 180, 60),     // 1: orange body
+    (220, 150, 40),     // 2: darker
+    (40, 40, 40),       // 3: pupils
+    (255, 255, 255),    // 4: eye whites
+    (255, 60, 60),      // 5: angry red (brows, mouth)
+    (200, 140, 40),     // 6: feet
+    (255, 100, 100),    // 7: flush/anger
+];
+
+const SPRITE_INPUT: [Sprite; 3] = [
+    // Frame 0: angry brows down
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,5,1,1,1,1,5,1,0],
+        [0,1,1,4,3,3,4,1,1,0],
+        [0,7,1,1,1,1,1,1,7,0],
+        [0,1,1,5,5,5,5,1,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,0,6,0,0,6,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
+    // Frame 1: brows shifted
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,1,5,1,1,5,1,1,0],
+        [0,1,1,4,3,3,4,1,1,0],
+        [0,7,1,1,1,1,1,1,7,0],
+        [0,1,1,1,5,5,1,1,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,6,0,0,0,0,6,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
+    // Frame 2: wider stance
+    [
+        [0,0,0,1,1,1,1,0,0,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,1,5,1,1,1,1,5,1,0],
+        [0,1,1,3,4,4,3,1,1,0],
+        [0,1,7,1,1,1,1,7,1,0],
+        [0,1,5,1,5,5,1,5,1,0],
+        [0,1,1,1,1,1,1,1,1,0],
+        [0,0,1,1,1,1,1,1,0,0],
+        [0,0,0,6,0,0,6,0,0,0],
+        [0,0,0,0,0,0,0,0,0,0],
+    ],
+];
+
+// ── Sprite selection ─────────────────────────────────────────────────
+
+fn sprite_data(status: &SessionStatus, frame: usize) -> (&'static Sprite, Palette) {
+    match status {
+        SessionStatus::New => (&SPRITE_EGG[0], PAL_EGG),
+        SessionStatus::Working => (&SPRITE_WORKING[frame % 3], PAL_WORKING),
+        SessionStatus::Idle => (&SPRITE_IDLE[0], PAL_IDLE),
+        SessionStatus::Input => (&SPRITE_INPUT[frame % 3], PAL_INPUT),
+    }
+}
+
+// ── Half-block renderer ──────────────────────────────────────────────
+// Renders a pixel grid as Lines of Spans using ▀▄ with fg+bg colors.
+// Each terminal line encodes 2 pixel rows.
+
+fn render_sprite_lines(sprite: &Sprite, palette: Palette) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let rows = SPRITE_H;
+    let cols = SPRITE_W;
+
+    for y in (0..rows).step_by(2) {
+        let mut spans: Vec<Span<'static>> = Vec::new();
+
+        for x in 0..cols {
+            let top = sprite[y][x];
+            let bot = if y + 1 < rows { sprite[y + 1][x] } else { 0 };
+
+            if top == 0 && bot == 0 {
+                spans.push(Span::raw(" "));
+            } else if top == 0 {
+                // Bottom pixel only: ▄ with fg = bottom color
+                let (r, g, b) = palette[bot as usize];
+                spans.push(Span::styled(
+                    "\u{2584}",
+                    Style::default().fg(Color::Rgb(r, g, b)),
+                ));
+            } else if bot == 0 {
+                // Top pixel only: ▀ with fg = top color
+                let (r, g, b) = palette[top as usize];
+                spans.push(Span::styled(
+                    "\u{2580}",
+                    Style::default().fg(Color::Rgb(r, g, b)),
+                ));
+            } else {
+                // Both pixels: ▀ with fg = top, bg = bottom
+                let (tr, tg, tb) = palette[top as usize];
+                let (br, bg, bb) = palette[bot as usize];
+                spans.push(Span::styled(
+                    "\u{2580}",
+                    Style::default()
+                        .fg(Color::Rgb(tr, tg, tb))
+                        .bg(Color::Rgb(br, bg, bb)),
+                ));
+            }
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    lines
+}
 
 // ── Room grouping ────────────────────────────────────────────────────
 
@@ -87,13 +292,13 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
     rooms
 }
 
-// ── Animation (only Working and Input) ───────────────────────────────
+// ── Animation ────────────────────────────────────────────────────────
 
 fn animation_frame(status: &SessionStatus, tick: u64) -> usize {
     match status {
-        SessionStatus::Working => ((tick / 2) % 3) as usize, // 400ms
-        SessionStatus::Input => (tick % 3) as usize,         // 200ms (urgent)
-        _ => 0,                                               // static
+        SessionStatus::Working => ((tick / 2) % 3) as usize,
+        SessionStatus::Input => (tick % 3) as usize,
+        _ => 0,
     }
 }
 
@@ -104,15 +309,6 @@ fn session_phase_offset(session_id: &str) -> u64 {
         % 7
 }
 
-fn character_art(status: &SessionStatus, frame: usize) -> &'static [&'static str; 5] {
-    match status {
-        SessionStatus::New => &CHAR_NEW,
-        SessionStatus::Working => &CHAR_WORKING[frame % 3],
-        SessionStatus::Idle => &CHAR_IDLE,
-        SessionStatus::Input => &CHAR_INPUT[frame % 3],
-    }
-}
-
 fn status_color(status: &SessionStatus) -> Color {
     match status {
         SessionStatus::New => Color::Blue,
@@ -120,28 +316,6 @@ fn status_color(status: &SessionStatus) -> Color {
         SessionStatus::Idle => Color::DarkGray,
         SessionStatus::Input => Color::Yellow,
     }
-}
-
-// ── Fatigue overlay ──────────────────────────────────────────────────
-
-fn apply_fatigue_overlay(art: &[&str; 5], ratio: f64) -> [String; 5] {
-    let mut lines: [String; 5] = art.each_ref().map(|s| s.to_string());
-    if ratio > 0.90 {
-        let len = lines[0].len();
-        if len >= 2 {
-            lines[0].replace_range(len - 2.., ";;");
-        }
-        let len = lines[1].len();
-        if len >= 1 {
-            lines[1].replace_range(len - 1.., "'");
-        }
-    } else if ratio > 0.75 {
-        let len = lines[1].len();
-        if len >= 1 {
-            lines[1].replace_range(len - 1.., "'");
-        }
-    }
-    lines
 }
 
 // ── Context bar ──────────────────────────────────────────────────────
@@ -169,7 +343,6 @@ fn context_bar(ratio: f64) -> (String, Color) {
 
 // ── Public render entry point ────────────────────────────────────────
 
-/// Call before render to resolve pending zoom requests and clamp page.
 pub fn resolve_zoom(app: &mut App) {
     let rooms = group_into_rooms(&app.sessions);
     let total_pages = (rooms.len() + ROOMS_PER_PAGE - 1) / ROOMS_PER_PAGE;
@@ -203,16 +376,13 @@ fn render_rooms(frame: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    // Zoomed into a single room?
     if let Some(ref zoomed_name) = app.view_zoomed_room {
         if let Some(room) = rooms.iter().find(|r| &r.name == zoomed_name) {
             render_room(frame, app, room, area, None);
             return;
         }
-        // Room disappeared — fall through to grid
     }
 
-    // Paginate: 4 rooms per page
     let total_pages = (rooms.len() + ROOMS_PER_PAGE - 1) / ROOMS_PER_PAGE;
     let page = app.view_page.min(total_pages.saturating_sub(1));
     let page_start = page * ROOMS_PER_PAGE;
@@ -222,23 +392,18 @@ fn render_rooms(frame: &mut Frame, app: &App, area: Rect) {
         .take(ROOMS_PER_PAGE)
         .collect();
 
-    // Fixed 2x2 grid
     let v_chunks = Layout::vertical([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(area);
-
     let top_h = Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(v_chunks[0]);
     let bot_h = Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(v_chunks[1]);
-
     let cells = [top_h[0], top_h[1], bot_h[0], bot_h[1]];
 
     for (i, cell) in cells.iter().enumerate() {
         if let Some(room) = page_rooms.get(i) {
-            let display_idx = i + 1; // 1-based for key hint
-            render_room(frame, app, room, *cell, Some(display_idx));
+            render_room(frame, app, room, *cell, Some(i + 1));
         } else {
-            // Empty cell — render placeholder
             let block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Rgb(30, 30, 30)));
@@ -249,11 +414,7 @@ fn render_rooms(frame: &mut Frame, app: &App, area: Rect) {
 
 fn render_room(frame: &mut Frame, app: &App, room: &Room, area: Rect, slot_num: Option<usize>) {
     let border_color = if room.has_input {
-        if app.tick % 2 == 0 {
-            Color::Yellow
-        } else {
-            Color::White
-        }
+        if app.tick % 2 == 0 { Color::Yellow } else { Color::White }
     } else {
         Color::DarkGray
     };
@@ -284,7 +445,6 @@ fn render_room(frame: &mut Frame, app: &App, room: &Room, area: Rect, slot_num: 
     let chars_per_row = (inner.width / CHAR_WIDTH).max(1) as usize;
     let char_rows: Vec<&[usize]> = room.session_indices.chunks(chars_per_row).collect();
 
-    // Vertically center characters within the room
     let needed_height = char_rows.len() as u16 * CHAR_HEIGHT;
     let v_pad = inner.height.saturating_sub(needed_height) / 2;
     let char_area = Rect {
@@ -326,36 +486,20 @@ fn render_character(frame: &mut Frame, session: &Session, area: Rect, tick: u64)
 
     let offset = session_phase_offset(&session.session_id);
     let anim_frame = animation_frame(&session.status, tick + offset);
-    let art = character_art(&session.status, anim_frame);
+    let (sprite, palette) = sprite_data(&session.status, anim_frame);
     let ratio = session.token_ratio();
 
-    let art_lines = if ratio > 0.75 {
-        apply_fatigue_overlay(art, ratio)
-    } else {
-        art.each_ref().map(|s| s.to_string())
-    };
-
-    // Pulse color for Input status
     let color = if session.status == SessionStatus::Input {
-        if tick % 2 == 0 {
-            Color::Yellow
-        } else {
-            Color::White
-        }
+        if tick % 2 == 0 { Color::Yellow } else { Color::White }
     } else {
         status_color(&session.status)
     };
 
     let mut lines: Vec<Line> = Vec::new();
 
-    // Character art (5 lines)
-    for line in &art_lines {
-        let truncated = truncate_str(line, area.width as usize);
-        lines.push(Line::from(Span::styled(
-            truncated,
-            Style::default().fg(color),
-        )));
-    }
+    // Pixel art sprite (5 terminal lines)
+    let sprite_lines = render_sprite_lines(sprite, palette);
+    lines.extend(sprite_lines);
 
     // Session name
     let name = session.tmux_session.as_deref().unwrap_or("???");
@@ -389,15 +533,10 @@ fn render_character(frame: &mut Frame, session: &Session, area: Rect, tick: u64)
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, _tick: u64) {
-    let art = &CHAR_IDLE;
+    let (sprite, palette) = sprite_data(&SessionStatus::Idle, 0);
     let mut lines: Vec<Line> = Vec::new();
     lines.push(Line::from(""));
-    for &line in art {
-        lines.push(Line::from(Span::styled(
-            line,
-            Style::default().fg(Color::DarkGray),
-        )));
-    }
+    lines.extend(render_sprite_lines(sprite, palette));
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
         "No active sessions",
