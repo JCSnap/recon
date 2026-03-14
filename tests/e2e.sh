@@ -235,7 +235,7 @@ else
 
     # Resume via recon --resume (no-attach: creates detached session, switch-client skips if inside tmux with no client)
     # Use --name to control the session name for lookup
-    "$RECON" --resume "$ORIG_SESSION_ID" --name "$S_RESUME_NEW" 2>/dev/null || true
+    "$RECON" --resume "$ORIG_SESSION_ID" --name "$S_RESUME_NEW" --no-attach 2>/dev/null || true
 
     # Wait for the session file to be written and recon to refresh
     sleep 8

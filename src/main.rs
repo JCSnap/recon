@@ -71,16 +71,19 @@ fn main() -> io::Result<()> {
             let session_id = match args.get(2) {
                 Some(id) => id,
                 None => {
-                    eprintln!("Usage: recon --resume <session-id> [--name <name>]");
+                    eprintln!("Usage: recon --resume <session-id> [--name <name>] [--no-attach]");
                     std::process::exit(1);
                 }
             };
             let name = args.iter().position(|a| a == "--name")
                 .and_then(|i| args.get(i + 1))
                 .map(|s| s.as_str());
+            let no_attach = args.iter().any(|a| a == "--no-attach");
             match tmux::resume_session(session_id, name) {
                 Ok(sess) => {
-                    tmux::switch_to_session(&sess);
+                    if !no_attach {
+                        tmux::switch_to_session(&sess);
+                    }
                     eprintln!("Resumed in session: {sess}");
                 }
                 Err(e) => {
