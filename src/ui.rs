@@ -3,7 +3,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Row, Table, Paragraph},
+    widgets::{Block, Borders, Cell, Clear, Row, Table, Paragraph},
 };
 
 use crate::app::App;
@@ -17,7 +17,11 @@ pub fn render(frame: &mut Frame, app: &App) {
     .split(frame.area());
 
     render_table(frame, app, chunks[0]);
-    render_footer(frame, chunks[1]);
+    render_footer(frame, app, chunks[1]);
+
+    if let Some(cmd) = &app.resume_popup {
+        render_resume_popup(frame, cmd);
+    }
 }
 
 fn render_table(frame: &mut Frame, app: &App, area: Rect) {
@@ -140,18 +144,55 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_widget(table, area);
 }
 
-fn render_footer(frame: &mut Frame, area: Rect) {
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("j/k", Style::default().fg(Color::Cyan)),
-        Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(Color::Cyan)),
-        Span::raw(" switch  "),
-        Span::styled("r", Style::default().fg(Color::Cyan)),
-        Span::raw(" refresh  "),
-        Span::styled("q", Style::default().fg(Color::Cyan)),
-        Span::raw(" quit"),
-    ]));
+fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
+    let footer = if app.resume_popup.is_some() {
+        Paragraph::new(Line::from(vec![
+            Span::styled("Copied to clipboard", Style::default().fg(Color::Green)),
+            Span::raw(" — press any key to dismiss"),
+        ]))
+    } else {
+        Paragraph::new(Line::from(vec![
+            Span::styled("j/k", Style::default().fg(Color::Cyan)),
+            Span::raw(" navigate  "),
+            Span::styled("Enter", Style::default().fg(Color::Cyan)),
+            Span::raw(" switch  "),
+            Span::styled("y", Style::default().fg(Color::Cyan)),
+            Span::raw(" resume  "),
+            Span::styled("r", Style::default().fg(Color::Cyan)),
+            Span::raw(" refresh  "),
+            Span::styled("q", Style::default().fg(Color::Cyan)),
+            Span::raw(" quit"),
+        ]))
+    };
     frame.render_widget(footer, area);
+}
+
+fn render_resume_popup(frame: &mut Frame, cmd: &str) {
+    let area = frame.area();
+    let popup_width = (cmd.len() as u16 + 6).min(area.width.saturating_sub(4)).max(40);
+    let popup_height = 5u16;
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+    frame.render_widget(Clear, popup_area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Yellow))
+        .title(" Resume command ");
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(cmd, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Copied to clipboard", Style::default().fg(Color::Green)),
+        ]),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Replace home directory prefix with ~.

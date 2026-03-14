@@ -10,6 +10,8 @@ pub struct App {
     pub selected: usize,
     pub effort_level: String,
     pub should_quit: bool,
+    /// Resume command to show in popup (Some = popup visible).
+    pub resume_popup: Option<String>,
     prev_sessions: HashMap<String, Session>,
 }
 
@@ -21,6 +23,7 @@ impl App {
             selected: 0,
             effort_level,
             should_quit: false,
+            resume_popup: None,
             prev_sessions: HashMap::new(),
         }
     }
@@ -44,6 +47,12 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
+        // Any keypress dismisses the resume popup.
+        if self.resume_popup.is_some() {
+            self.resume_popup = None;
+            return;
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => {
@@ -66,6 +75,18 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.refresh();
+            }
+            KeyCode::Char('y') => {
+                if let Some(session) = self.sessions.get(self.selected) {
+                    let tmux_name = session.tmux_session.as_deref().unwrap_or("");
+                    let cmd = format!(
+                        "recon --resume {} --name {}",
+                        session.session_id, tmux_name
+                    );
+                    // Copy to clipboard (macOS pbcopy / Linux xclip fallback)
+                    copy_to_clipboard(&cmd);
+                    self.resume_popup = Some(cmd);
+                }
             }
             _ => {}
         }
@@ -103,6 +124,32 @@ impl App {
             "effort_level": self.effort_level,
         }))
         .unwrap_or_else(|_| "{}".to_string())
+    }
+}
+
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    // macOS
+    if let Ok(mut child) = std::process::Command::new("pbcopy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+        return;
+    }
+    // Linux (X11)
+    if let Ok(mut child) = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+    {
+        if let Some(stdin) = child.stdin.as_mut() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
     }
 }
 
