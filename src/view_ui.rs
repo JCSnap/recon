@@ -252,6 +252,7 @@ struct Room {
     name: String,
     session_indices: Vec<usize>,
     has_input: bool,
+    last_activity: Option<String>,
 }
 
 fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
@@ -272,10 +273,16 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
             let has_input = indices
                 .iter()
                 .any(|&i| sessions[i].status == SessionStatus::Input);
+            let last_activity = indices
+                .iter()
+                .filter_map(|&i| sessions[i].last_activity.as_ref())
+                .max()
+                .cloned();
             Room {
                 name,
                 session_indices: indices,
                 has_input,
+                last_activity,
             }
         })
         .collect();
@@ -283,7 +290,7 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
     rooms.sort_by(|a, b| {
         b.has_input
             .cmp(&a.has_input)
-            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| b.last_activity.cmp(&a.last_activity))
     });
 
     rooms
@@ -631,5 +638,104 @@ fn truncate_str(s: &str, max_width: usize) -> String {
         format!("{}\u{2026}", truncated)
     } else {
         String::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_session(cwd: &str, status: SessionStatus, last_activity: Option<&str>) -> Session {
+        Session {
+            session_id: String::new(),
+            project_name: String::new(),
+            branch: None,
+            cwd: cwd.to_string(),
+            tmux_session: None,
+            model: None,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            status,
+            pid: None,
+            last_activity: last_activity.map(|s| s.to_string()),
+            started_at: 0,
+            jsonl_path: PathBuf::new(),
+            last_file_size: 0,
+        }
+    }
+
+    #[test]
+    fn rooms_with_input_sort_first() {
+        let sessions = vec![
+            make_session("/a", SessionStatus::Idle, Some("2026-03-16T10:00:00Z")),
+            make_session("/b", SessionStatus::Input, Some("2026-03-16T09:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/b");
+        assert_eq!(rooms[1].name, "/a");
+    }
+
+    #[test]
+    fn secondary_sort_by_last_activity_descending() {
+        let sessions = vec![
+            make_session("/old", SessionStatus::Idle, Some("2026-03-16T08:00:00Z")),
+            make_session("/recent", SessionStatus::Idle, Some("2026-03-16T12:00:00Z")),
+            make_session("/mid", SessionStatus::Idle, Some("2026-03-16T10:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/recent");
+        assert_eq!(rooms[1].name, "/mid");
+        assert_eq!(rooms[2].name, "/old");
+    }
+
+    #[test]
+    fn new_sessions_sort_last() {
+        let sessions = vec![
+            make_session("/egg", SessionStatus::New, None),
+            make_session("/active", SessionStatus::Idle, Some("2026-03-16T10:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/active");
+        assert_eq!(rooms[1].name, "/egg");
+    }
+
+    #[test]
+    fn room_activity_uses_max_across_sessions() {
+        let sessions = vec![
+            make_session("/repo", SessionStatus::Idle, Some("2026-03-16T08:00:00Z")),
+            make_session("/repo", SessionStatus::New, None),
+            make_session("/repo", SessionStatus::Idle, Some("2026-03-16T12:00:00Z")),
+            make_session("/other", SessionStatus::Idle, Some("2026-03-16T10:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/repo");
+        assert_eq!(rooms[1].name, "/other");
+    }
+
+    #[test]
+    fn input_rooms_also_sorted_by_activity() {
+        let sessions = vec![
+            make_session("/old-input", SessionStatus::Input, Some("2026-03-16T08:00:00Z")),
+            make_session("/new-input", SessionStatus::Input, Some("2026-03-16T12:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/new-input");
+        assert_eq!(rooms[1].name, "/old-input");
+    }
+
+    #[test]
+    fn mixed_input_and_activity_sorting() {
+        let sessions = vec![
+            make_session("/idle-recent", SessionStatus::Idle, Some("2026-03-16T15:00:00Z")),
+            make_session("/input-old", SessionStatus::Input, Some("2026-03-16T08:00:00Z")),
+            make_session("/egg", SessionStatus::New, None),
+            make_session("/idle-old", SessionStatus::Idle, Some("2026-03-16T09:00:00Z")),
+        ];
+        let rooms = group_into_rooms(&sessions);
+        assert_eq!(rooms[0].name, "/input-old");   // input first regardless of activity
+        assert_eq!(rooms[1].name, "/idle-recent");  // most recent activity
+        assert_eq!(rooms[2].name, "/idle-old");     // older activity
+        assert_eq!(rooms[3].name, "/egg");           // no activity last
     }
 }

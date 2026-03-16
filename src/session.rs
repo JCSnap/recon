@@ -283,8 +283,8 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         }
     }
 
-    // Sort by creation time (oldest first)
-    sessions.sort_by_key(|s| std::cmp::Reverse(s.started_at));
+    // Sort by last activity (most recent first), sessions with no activity last
+    sessions.sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
     sessions
 }
 
