@@ -1,4 +1,5 @@
 mod app;
+mod cli;
 mod history;
 mod model;
 mod new_session;
@@ -10,6 +11,7 @@ mod view_ui;
 use std::io;
 use std::time::{Duration, Instant};
 
+use clap::Parser;
 use crossterm::{
     event::{self, Event},
     execute,
@@ -19,21 +21,19 @@ use ratatui::prelude::CrosstermBackend;
 use ratatui::Terminal;
 
 use app::{App, ViewMode};
+use cli::{Cli, Command};
 
 fn main() -> io::Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    let cmd = args.get(1).map(|s| s.as_str());
+    let cli = Cli::parse();
 
-    match cmd {
-        Some("new") => {
+    match cli.command {
+        Some(Command::New) => {
             let result = new_session::run_new_session_form()?;
             if let Some(name) = result {
                 tmux::switch_to_session(&name);
             }
-            return Ok(());
         }
-        Some("launch") => {
-            let name_only = args.iter().any(|a| a == "--name-only");
+        Some(Command::Launch { name_only }) => {
             let (default_name, cwd) = tmux::default_new_session_info();
             match tmux::create_session(&default_name, &cwd) {
                 Ok(name) => {
@@ -49,15 +49,14 @@ fn main() -> io::Result<()> {
                     std::process::exit(1);
                 }
             }
-            return Ok(());
         }
-        Some("resume") => {
-            // Interactive resume picker from history
-            let result = history::run_resume_picker()?;
-            if let Some((session_id, name)) = result {
-                match tmux::resume_session(&session_id, Some(&name)) {
+        Some(Command::Resume { id, name, no_attach }) => {
+            if let Some(session_id) = id {
+                match tmux::resume_session(&session_id, name.as_deref()) {
                     Ok(sess) => {
-                        tmux::switch_to_session(&sess);
+                        if !no_attach {
+                            tmux::switch_to_session(&sess);
+                        }
                         eprintln!("Resumed in session: {sess}");
                     }
                     Err(e) => {
@@ -65,36 +64,23 @@ fn main() -> io::Result<()> {
                         std::process::exit(1);
                     }
                 }
-            }
-            return Ok(());
-        }
-        Some("--resume") => {
-            let session_id = match args.get(2) {
-                Some(id) => id,
-                None => {
-                    eprintln!("Usage: recon --resume <session-id> [--name <name>] [--no-attach]");
-                    std::process::exit(1);
-                }
-            };
-            let name = args.iter().position(|a| a == "--name")
-                .and_then(|i| args.get(i + 1))
-                .map(|s| s.as_str());
-            let no_attach = args.iter().any(|a| a == "--no-attach");
-            match tmux::resume_session(session_id, name) {
-                Ok(sess) => {
-                    if !no_attach {
-                        tmux::switch_to_session(&sess);
+            } else {
+                let result = history::run_resume_picker()?;
+                if let Some((session_id, sess_name)) = result {
+                    match tmux::resume_session(&session_id, Some(&sess_name)) {
+                        Ok(sess) => {
+                            tmux::switch_to_session(&sess);
+                            eprintln!("Resumed in session: {sess}");
+                        }
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            std::process::exit(1);
+                        }
                     }
-                    eprintln!("Resumed in session: {sess}");
-                }
-                Err(e) => {
-                    eprintln!("Error: {e}");
-                    std::process::exit(1);
                 }
             }
-            return Ok(());
         }
-        Some("next") => {
+        Some(Command::Next) => {
             let mut app = App::new();
             app.refresh();
             if let Some(session) = app.sessions.iter().find(|s| s.status == session::SessionStatus::Input) {
@@ -102,27 +88,26 @@ fn main() -> io::Result<()> {
                     tmux::switch_to_session(name);
                 }
             }
-            return Ok(());
         }
-        Some("--json") => {
+        Some(Command::Json) => {
             let mut app = App::new();
             app.refresh();
             println!("{}", app.to_json());
-            return Ok(());
         }
-        Some("view") => {
-            // Fall through to TUI with view mode
+        Some(Command::View) | None => {
+            let start_mode = if matches!(cli.command, Some(Command::View)) {
+                ViewMode::View
+            } else {
+                ViewMode::Table
+            };
+            run_tui(start_mode)?;
         }
-        _ => {}
     }
 
-    let start_mode = if cmd == Some("view") {
-        ViewMode::View
-    } else {
-        ViewMode::Table
-    };
+    Ok(())
+}
 
-    // Default: TUI dashboard
+fn run_tui(start_mode: ViewMode) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
