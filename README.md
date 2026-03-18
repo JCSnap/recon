@@ -154,6 +154,14 @@ bind X confirm-before -p "Kill session #S? (y/n)" kill-session
 
 This lets you pop open the dashboard from any tmux session, pick a session with `Enter`, and jump straight to it.
 
+## Contribution Policy
+
+This project is not accepting code contributions (Pull Requests) at this time.
+
+Due to the sensitive nature of reconnaissance and session tracking, I prefer to maintain full control over the codebase to ensure security and auditability.
+
+Ideas and feedback are welcome! Please open an [Issue](https://github.com/gavraz/recon/issues) if you have a feature request or have found a bug. If I like an idea, I will implement it myself.
+
 ## License
 
 MIT
