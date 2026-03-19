@@ -112,9 +112,6 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('r') => {
-                self.refresh();
-            }
             _ => {}
         }
     }
@@ -181,7 +178,6 @@ impl App {
                 self.view_selected_agent = 0;
                 self.view_mode = ViewMode::Table;
             }
-            KeyCode::Char('r') => self.refresh(),
             KeyCode::Char('j') | KeyCode::Down => {
                 self.view_page = self.view_page.saturating_add(1);
             }

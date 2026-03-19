@@ -608,8 +608,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
     spans.push(Span::raw(" next input  "));
     spans.push(Span::styled("v", Style::default().fg(Color::Cyan)));
     spans.push(Span::raw(" table  "));
-    spans.push(Span::styled("r", Style::default().fg(Color::Cyan)));
-    spans.push(Span::raw(" refresh  "));
     spans.push(Span::styled("q", Style::default().fg(Color::Cyan)));
     spans.push(Span::raw(" quit"));
 

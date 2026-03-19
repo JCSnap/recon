@@ -152,8 +152,6 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
         Span::raw(" view  "),
         Span::styled("i", Style::default().fg(Color::Cyan)),
         Span::raw(" next input  "),
-        Span::styled("r", Style::default().fg(Color::Cyan)),
-        Span::raw(" refresh  "),
         Span::styled("q", Style::default().fg(Color::Cyan)),
         Span::raw(" quit"),
     ]));

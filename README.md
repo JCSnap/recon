@@ -121,7 +121,6 @@ recon unpark                                 # Restore previously parked session
 | `i` / `Tab` | Jump to next agent waiting for input |
 | `x` | Kill selected session |
 | `v` | Switch to Tamagotchi view |
-| `r` | Force refresh |
 | `q` / `Esc` | Quit |
 
 ### Keybindings — Tamagotchi View
@@ -136,7 +135,6 @@ recon unpark                                 # Restore previously parked session
 | `n` | New session in room (when zoomed) |
 | `Esc` | Zoom out (or quit) |
 | `v` | Switch to table view |
-| `r` | Force refresh |
 | `q` | Quit |
 
 ## tmux config
