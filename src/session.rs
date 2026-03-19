@@ -33,6 +33,7 @@ pub struct Session {
     pub project_name: String,
     pub branch: Option<String>,
     pub cwd: String,
+    pub room_id: String,
     pub tmux_session: Option<String>,
     pub model: Option<String>,
     pub total_input_tokens: u64,
@@ -162,8 +163,9 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                             prev.and_then(|s| s.last_activity.clone()),
                         );
                         let cwd = info.cwd.unwrap_or_else(|| decode_project_path(&project_dir));
-                        let (project_name, branch) = git_project_info(&cwd);
+                        let (project_name, room_id, branch) = git_project_info(&cwd);
                         existing.project_name = project_name;
+                        existing.room_id = room_id;
                         existing.branch = branch;
                         existing.cwd = cwd;
                         existing.model = info.model;
@@ -193,7 +195,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             let cwd = info
                 .cwd
                 .unwrap_or_else(|| decode_project_path(&project_dir));
-            let (project_name, branch) = git_project_info(&cwd);
+            let (project_name, room_id, branch) = git_project_info(&cwd);
 
             let status = determine_status(
                 &path,
@@ -209,6 +211,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 project_name,
                 branch,
                 cwd,
+                room_id,
                 tmux_session: Some(live.tmux_session.clone()),
                 model: info.model,
                 effort: info.effort,
@@ -285,7 +288,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             );
 
             let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
-            let (project_name, branch) = git_project_info(&cwd);
+            let (project_name, room_id, branch) = git_project_info(&cwd);
 
             let status = determine_status(
                 &path,
@@ -297,6 +300,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
+                room_id,
                 branch,
                 cwd,
                 tmux_session: Some(live.tmux_session.clone()),
@@ -313,10 +317,11 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             });
         } else {
             // No JSONL found — brand-new session, show as New placeholder
-            let (project_name, branch) = git_project_info(&live.pane_cwd);
+            let (project_name, room_id, branch) = git_project_info(&live.pane_cwd);
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
+                room_id,
                 branch,
                 cwd: live.pane_cwd.clone(),
                 tmux_session: Some(live.tmux_session.clone()),
@@ -433,6 +438,7 @@ use std::time::Instant;
 
 struct GitInfo {
     repo_name: String,
+    room_id: String,
     branch: Option<String>,
     fetched_at: Instant,
 }
@@ -441,18 +447,19 @@ static GIT_CACHE: Mutex<Option<HashMap<String, GitInfo>>> = Mutex::new(None);
 
 const GIT_CACHE_TTL: Duration = Duration::from_secs(30);
 
-/// Get the git project name and branch for a directory (cached for 30s).
-fn git_project_info(cwd: &str) -> (String, Option<String>) {
+/// Get the git project name, room_id, and branch for a directory (cached for 30s).
+fn git_project_info(cwd: &str) -> (String, String, Option<String>) {
     {
         let cache = GIT_CACHE.lock().unwrap();
         if let Some(info) = cache.as_ref().and_then(|c| c.get(cwd)) {
             if info.fetched_at.elapsed() < GIT_CACHE_TTL {
-                return (info.repo_name.clone(), info.branch.clone());
+                return (info.repo_name.clone(), info.room_id.clone(), info.branch.clone());
             }
         }
     }
 
     let repo_name = fetch_git_repo_name(cwd);
+    let room_id = fetch_room_id(cwd);
     let branch = fetch_git_branch(cwd);
 
     let mut cache = GIT_CACHE.lock().unwrap();
@@ -463,30 +470,46 @@ fn git_project_info(cwd: &str) -> (String, Option<String>) {
         cwd.to_string(),
         GitInfo {
             repo_name: repo_name.clone(),
+            room_id: room_id.clone(),
             branch: branch.clone(),
             fetched_at: Instant::now(),
         },
     );
-    (repo_name, branch)
+    (repo_name, room_id, branch)
 }
 
 fn fetch_git_repo_name(cwd: &str) -> String {
-    match std::process::Command::new("git")
-        .args(["-C", cwd, "rev-parse", "--show-toplevel"])
-        .output()
-    {
-        Ok(o) if o.status.success() => {
-            let toplevel = String::from_utf8_lossy(&o.stdout).trim().to_string();
-            Path::new(&toplevel)
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| cwd.to_string())
-        }
-        _ => Path::new(cwd)
+    // Use --git-common-dir to get a stable name across worktrees
+    fetch_canonical_repo_name(cwd).unwrap_or_else(|| {
+        Path::new(cwd)
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| cwd.to_string()),
+            .unwrap_or_else(|| cwd.to_string())
+    })
+}
+
+/// Get the canonical repo name from --git-common-dir (stable across worktrees).
+fn fetch_canonical_repo_name(cwd: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--git-common-dir"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
     }
+    let common = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let common_path = if Path::new(&common).is_absolute() {
+        PathBuf::from(&common)
+    } else {
+        PathBuf::from(cwd).join(&common)
+    };
+    let resolved = common_path.canonicalize().unwrap_or(common_path);
+    let repo_root = if resolved.file_name().map(|n| n == ".git").unwrap_or(false) {
+        resolved.parent()?
+    } else {
+        &resolved
+    };
+    repo_root.file_name().map(|n| n.to_string_lossy().to_string())
 }
 
 fn fetch_git_branch(cwd: &str) -> Option<String> {
@@ -502,6 +525,45 @@ fn fetch_git_branch(cwd: &str) -> Option<String> {
         None
     } else {
         Some(branch)
+    }
+}
+
+/// Compute a stable room identifier for a CWD.
+///
+/// Uses `git rev-parse --git-common-dir` to get a path that is identical across
+/// all worktrees of the same repo, then combines the canonical repo name with
+/// the relative path from the worktree root to the CWD.
+///
+/// Examples (two worktrees of line5):
+///   /repos/line5              → "line5"
+///   /worktrees/line5-feat     → "line5"          (same room)
+///   /repos/line5/tools/solo   → "line5 › tools/solo"
+///   /worktrees/line5/tools/solo → "line5 › tools/solo"  (same room)
+fn fetch_room_id(cwd: &str) -> String {
+    // Get the worktree toplevel so we can compute the relative path
+    let toplevel = match std::process::Command::new("git")
+        .args(["-C", cwd, "rev-parse", "--show-toplevel"])
+        .output()
+    {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return cwd.to_string(), // not a git repo — fall back to absolute path
+    };
+
+    let canonical_name = fetch_canonical_repo_name(cwd)
+        .or_else(|| Path::new(&toplevel).file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| cwd.to_string());
+
+    // Compute relative path from worktree root to CWD
+    let cwd_path = Path::new(cwd);
+    let toplevel_path = Path::new(&toplevel);
+    let relative = cwd_path
+        .strip_prefix(toplevel_path)
+        .unwrap_or(Path::new(""));
+
+    if relative.as_os_str().is_empty() || relative == Path::new(".") {
+        canonical_name
+    } else {
+        format!("{} \u{203A} {}", canonical_name, relative.display())
     }
 }
 

@@ -201,10 +201,10 @@ impl App {
             .iter()
             .enumerate()
             .filter(|(_, s)| {
-                let name = if s.cwd.is_empty() {
+                let name = if s.room_id.is_empty() {
                     "unknown".to_string()
                 } else {
-                    shorten_home(&s.cwd)
+                    s.room_id.clone()
                 };
                 &name == room_name
             })
@@ -237,6 +237,7 @@ impl App {
                     "project_name": s.project_name,
                     "branch": s.branch,
                     "cwd": s.cwd,
+                    "room_id": s.room_id,
                     "tmux_session": s.tmux_session,
                     "model": s.model,
                     "model_display": s.model_display(),
@@ -259,13 +260,4 @@ impl App {
     }
 }
 
-fn shorten_home(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        let home_str = home.to_string_lossy();
-        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
-            return format!("~{rest}");
-        }
-    }
-    path.to_string()
-}
 

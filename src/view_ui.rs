@@ -259,10 +259,10 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
     let mut map: BTreeMap<String, Vec<usize>> = BTreeMap::new();
 
     for (i, s) in sessions.iter().enumerate() {
-        let room_name = if s.cwd.is_empty() {
+        let room_name = if s.room_id.is_empty() {
             "unknown".to_string()
         } else {
-            shorten_home(&s.cwd)
+            s.room_id.clone()
         };
         map.entry(room_name).or_default().push(i);
     }
@@ -617,16 +617,6 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-fn shorten_home(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        let home_str = home.to_string_lossy();
-        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
-            return format!("~{rest}");
-        }
-    }
-    path.to_string()
-}
-
 fn truncate_str(s: &str, max_width: usize) -> String {
     let char_count: usize = s.chars().count();
     if char_count <= max_width {
@@ -650,8 +640,10 @@ mod tests {
             project_name: String::new(),
             branch: None,
             cwd: cwd.to_string(),
+            room_id: cwd.to_string(),
             tmux_session: None,
             model: None,
+            effort: None,
             total_input_tokens: 0,
             total_output_tokens: 0,
             status,
@@ -720,6 +712,30 @@ mod tests {
         let rooms = group_into_rooms(&sessions);
         assert_eq!(rooms[0].name, "/new-input");
         assert_eq!(rooms[1].name, "/old-input");
+    }
+
+    #[test]
+    fn worktrees_share_room_by_room_id() {
+        // Two sessions with different CWDs but same room_id should be in the same room
+        let mut s1 = make_session("/repos/line5", SessionStatus::Idle, Some("2026-03-16T10:00:00Z"));
+        s1.room_id = "line5".to_string();
+        let mut s2 = make_session("/worktrees/line5-feat", SessionStatus::Working, Some("2026-03-16T11:00:00Z"));
+        s2.room_id = "line5".to_string();
+        let rooms = group_into_rooms(&[s1, s2]);
+        assert_eq!(rooms.len(), 1);
+        assert_eq!(rooms[0].name, "line5");
+        assert_eq!(rooms[0].session_indices.len(), 2);
+    }
+
+    #[test]
+    fn subproject_gets_separate_room() {
+        // Root and subproject should be different rooms
+        let mut s1 = make_session("/repos/line5", SessionStatus::Idle, Some("2026-03-16T10:00:00Z"));
+        s1.room_id = "line5".to_string();
+        let mut s2 = make_session("/repos/line5/tools/solo", SessionStatus::Idle, Some("2026-03-16T11:00:00Z"));
+        s2.room_id = "line5 \u{203A} tools/solo".to_string();
+        let rooms = group_into_rooms(&[s1, s2]);
+        assert_eq!(rooms.len(), 2);
     }
 
     #[test]
