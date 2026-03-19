@@ -162,7 +162,7 @@ if should_run "working_state"; then
 
     # Wait for the TUI to be fully ready for input
     sleep 3
-    send_to_session "$S_NEW" "write a 500 word essay about the history of unix"
+    send_to_session "$S_NEW" "wait 10 seconds and then run ls"
 
     if wait_for_state "$S_NEW" "Working" 15; then
         report pass "Working state detected for $S_NEW"

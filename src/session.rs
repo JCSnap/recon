@@ -101,7 +101,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
     // by joining ~/.claude/sessions/{PID}.json with tmux pane info.
     let live_map = build_live_session_map();
 
-    let mut sessions = Vec::new();
+    let mut sessions: Vec<Session> = Vec::new();
     let mut matched_session_ids: std::collections::HashSet<String> =
         std::collections::HashSet::new();
     let cutoff = SystemTime::now() - Duration::from_secs(24 * 3600);
@@ -151,6 +151,39 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 Some(l) => l,
                 None => continue,
             };
+
+            // Same session_id can appear in multiple project dirs (e.g. session
+            // started in one CWD then moved to a worktree). Prefer the newer file.
+            if matched_session_ids.contains(&session_id) {
+                if let Some(existing) = sessions.iter_mut().find(|s| s.session_id == session_id) {
+                    let existing_mtime = existing.jsonl_path.metadata().ok().and_then(|m| m.modified().ok());
+                    if existing_mtime.map_or(true, |t| modified > t) {
+                        let prev = prev_sessions.get(&session_id);
+                        let info = parse_jsonl(
+                            &path,
+                            prev.map(|s| s.last_file_size).unwrap_or(0),
+                            prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                            prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                            prev.and_then(|s| s.model.clone()),
+                            prev.and_then(|s| s.effort.clone()),
+                            prev.and_then(|s| s.last_activity.clone()),
+                        );
+                        let cwd = info.cwd.unwrap_or_else(|| decode_project_path(&project_dir));
+                        let (project_name, branch) = git_project_info(&cwd);
+                        existing.project_name = project_name;
+                        existing.branch = branch;
+                        existing.cwd = cwd;
+                        existing.model = info.model;
+                        existing.effort = info.effort;
+                        existing.total_input_tokens = info.input_tokens;
+                        existing.total_output_tokens = info.output_tokens;
+                        existing.last_activity = info.last_activity;
+                        existing.jsonl_path = path;
+                        existing.last_file_size = info.file_size;
+                    }
+                }
+                continue;
+            }
 
             // Incremental JSONL parsing
             let prev = prev_sessions.get(&session_id);
@@ -958,13 +991,18 @@ pub fn find_session_cwd(session_id: &str) -> Option<String> {
 /// - Input: last activity within 10 minutes (active conversation, waiting for user)
 /// - Idle: last activity older than 10 minutes
 fn determine_status(_path: &Path, input_tokens: u64, output_tokens: u64, tmux_session: Option<&str>) -> SessionStatus {
-    if input_tokens == 0 && output_tokens == 0 {
-        return SessionStatus::New;
+    // tmux pane content is the source of truth for active sessions
+    if let Some(name) = tmux_session {
+        let pane = pane_status(name);
+        // Only show New if pane also looks idle (no active streaming)
+        if input_tokens == 0 && output_tokens == 0 && pane == SessionStatus::Idle {
+            return SessionStatus::New;
+        }
+        return pane;
     }
 
-    // tmux pane content is the source of truth
-    if let Some(name) = tmux_session {
-        pane_status(name)
+    if input_tokens == 0 && output_tokens == 0 {
+        SessionStatus::New
     } else {
         SessionStatus::Idle
     }
@@ -1005,6 +1043,11 @@ fn pane_status(session_name: &str) -> SessionStatus {
             if trimmed.contains("Esc to cancel") {
                 return SessionStatus::Input;
             }
+        }
+
+        // Tool execution shows "(ctrl+b ctrl+b (twice) to run in background)"
+        if trimmed.contains("to run in background") {
+            return SessionStatus::Working;
         }
 
         // Selection-style permission prompts show "❯ N." (arrow + digit)
