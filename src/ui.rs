@@ -25,7 +25,6 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         Cell::from(" # "),
         Cell::from("Session"),
         Cell::from("Project"),
-        Cell::from("Directory"),
         Cell::from("Status"),
         Cell::from("Model"),
         Cell::from("Context"),
@@ -108,7 +107,6 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 Cell::from(num),
                 Cell::from(tmux_name.to_string()),
                 project_cell,
-                dir_cell,
                 status_cell,
                 Cell::from(session.model_display()),
                 Cell::from(session.token_display()).style(token_style),
@@ -128,12 +126,11 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     let widths = [
         Constraint::Length(4),   // #
         Constraint::Length(16),  // Session
-        Constraint::Min(20),    // Project (repo + branch)
-        Constraint::Length(20), // Directory
-        Constraint::Length(10), // Status
-        Constraint::Length(20), // Model
-        Constraint::Length(14), // Context
-        Constraint::Length(14), // Last Activity
+        Constraint::Min(20),     // Project (repo::subdir::branch)
+        Constraint::Length(10),  // Status
+        Constraint::Length(20),  // Model
+        Constraint::Length(14),  // Context
+        Constraint::Length(14),  // Last Activity
     ];
 
     let table = Table::new(rows, widths)
