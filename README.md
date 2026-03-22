@@ -8,9 +8,34 @@ Run multiple agent sessions in tmux across different projects, then manage them 
 
 ## Views
 
+### Table View (default)
+
+![recon dashboard](assets/dashboard.png)
+
+The table view shows all active sessions with their status, model, context usage, and last activity. A stats bar at the bottom displays rate-limit usage for each installed agent account.
+
+```
+┌─ recon — Claude Code Sessions ──────────────────────────────────────────────────────────────────────────┐
+│  #  Session          Project                    Status   Model       Context  Last Active               │
+│  1  api-refactor     myapp::feat/auth            ● Input  Opus 4.6    45k/1M   2m ago                   │
+│       Implement OAuth2 PKCE flow with refresh token rotation                                            │
+│  2  debug-pipeline   infra::main                 ● Work   Sonnet 4.6  12k/200k < 1m                     │
+│  3  write-tests      myapp::feat/auth            ● Work   Haiku 4.5   8k/200k  < 1m                     │
+│  4  code-review      webapp::pr-452              ● Idle   Sonnet 4.6  90k/200k 5m ago                   │
+│     scratch          recon::main                 ● Idle   Opus 4.6    3k/1M    10m ago                  │
+└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+cc1: 15% resets 1am  cc2: 6% resets 1am  codex: 0%  gemini: 0% resets 8:31 PM (24h)
+j/k navigate  Enter switch  x kill  v view  i next input  q quit
+```
+
+- **Input** rows are highlighted — these sessions are blocked waiting for your approval
+- **Last message preview** appears as a second line under each session row
+- **Tags** in the `#` column (set with `recon launch 1`) sort sessions alphanumerically, tagged first
+- **Stats bar** shows rate-limit usage % for each installed agent, fetched automatically on state changes
+
 ### Tamagotchi View (`recon view` or press `v`)
 
-A visual dashboard where each agent is a pixel-art creature living in a room. Designed for a side monitor — glance over and instantly see who's working, sleeping, or needs attention.
+A visual dashboard where each agent is a pixel-art creature living in a room. Designed for a side monitor — glance over and instantly see who's working, sleeping, or needs attention. The account stats bar appears at the bottom here too.
 
 Creatures are rendered as colored pixel art using half-block characters. Working and Input creatures animate; Idle and New stay still.
 
@@ -25,23 +50,8 @@ Creatures are rendered as colored pixel art using half-block characters. Working
 - **Zoom** into a room with `1`-`4`, page with `j`/`k`
 - **Context bar** per agent with green/yellow/red coloring
 
-### Table View (default)
-
-```
-┌─ recon — Claude Code Sessions ──────────────────────────────────────────────────────────────────────────┐
-│  #  Session          Git(Project::Branch)   Directory          Status  Model       Context  Last Active │
-│  1  api-refactor     myapp::feat/auth       ~/repos/myapp      ● Input Opus 4.6    45k/1M   2m ago      │
-│  2  debug-pipeline   infra::main            ~/repos/infra      ● Work  Sonnet 4.6  12k/200k < 1m        │
-│  3  write-tests      myapp::feat/auth       ~/repos/myapp      ● Work  Haiku 4.5   8k/200k  < 1m        │
-│  4  code-review      webapp::pr-452         ~/repos/webapp     ● Idle  Sonnet 4.6  90k/200k 5m ago      │
-│     scratch          recon::main            ~/repos/recon      ● Idle  Opus 4.6    3k/1M    10m ago     │
-└─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-j/k navigate  Enter switch  v view  r refresh  q quit
-```
-
 The `#` column shows your tag when set (`recon launch 1`), otherwise the row number. Use tags to map sessions to your terminal tabs — when a session shows **Input**, glance at the `#` to know which tab to switch to.
 
-- **Input** rows are highlighted — these sessions are blocked waiting for your approval
 - **Working** sessions are actively streaming or running tools
 - **Idle** sessions are done and waiting for your next prompt
 - **New** sessions haven't had any interaction yet
@@ -87,6 +97,8 @@ recon is built around **tmux**. Each Claude Code instance runs in its own tmux s
 | *(0 tokens)* | **New** — no interaction yet |
 
 **Session matching** uses `~/.claude/sessions/{PID}.json` files that Claude Code writes, linking each process to its session ID. No `ps` parsing or CWD-based heuristics.
+
+**Usage tracking** spawns a hidden background tmux session per agent whenever a session transitions from active → idle (or on startup), runs the agent's built-in usage command (`/usage` for Claude, `/status` for Codex, `/stats` for Gemini), and parses the rate-limit percentage from the output. Results are cached and displayed in the stats bar at the bottom of both views.
 
 ## Install
 
