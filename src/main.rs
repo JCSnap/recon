@@ -142,6 +142,7 @@ fn run_tui(start_mode: ViewMode) -> io::Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    usage::cleanup();
 
     if let Err(e) = result {
         eprintln!("Error: {e}");

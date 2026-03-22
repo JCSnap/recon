@@ -26,6 +26,14 @@ pub fn store(account: &str, info: UsageInfo) {
     }
 }
 
+/// Kill any leftover `_recon_usage_*` tmux sessions.
+pub fn cleanup() {
+    for suffix in &["claude", "claude_2", "codex", "gemini"] {
+        let session_name = format!("_recon_usage_{}", suffix);
+        tmux_kill(&session_name);
+    }
+}
+
 /// Trigger a background usage fetch for the given agent label.
 pub fn trigger_fetch(account: &str) {
     let account = account.to_string();
