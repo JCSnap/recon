@@ -377,11 +377,16 @@ pub fn resolve_zoom(app: &mut App) {
 }
 
 pub fn render(frame: &mut Frame, app: &App) {
-    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)])
-        .split(frame.area());
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1), // account stats
+        Constraint::Length(1), // footer
+    ])
+    .split(frame.area());
 
     render_rooms(frame, app, chunks[0]);
-    render_footer(frame, app, chunks[1]);
+    crate::ui::render_account_stats(frame, app, chunks[1]);
+    render_footer(frame, app, chunks[2]);
 }
 
 fn render_rooms(frame: &mut Frame, app: &App, area: Rect) {

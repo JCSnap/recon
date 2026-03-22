@@ -77,14 +77,34 @@ impl App {
         }
     }
 
-    /// Trigger an initial usage fetch for all installed agents (not just those with sessions).
-    /// Call once after the first refresh.
+    /// Trigger an initial usage fetch for all installed agents.
+    /// Agents with active sessions are fetched immediately; others are delayed
+    /// by 10 s to avoid overwhelming resources with simultaneous heavy CLI startups.
     pub fn fetch_initial_usage(&self) {
-        // Always fetch for agents that are installed, regardless of active sessions.
+        let active: std::collections::HashSet<String> =
+            self.sessions.iter().map(|s| s.agent.clone()).collect();
+
+        let mut deferred: Vec<String> = Vec::new();
+
         for agent in crate::tmux::Agent::all() {
-            if crate::tmux::is_installed(agent.binary()) {
-                usage::trigger_fetch(agent.label());
+            if !crate::tmux::is_installed(agent.binary()) {
+                continue;
             }
+            let label = agent.label().to_string();
+            if active.contains(&label) {
+                usage::trigger_fetch(&label);
+            } else {
+                deferred.push(label);
+            }
+        }
+
+        if !deferred.is_empty() {
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                for label in deferred {
+                    usage::trigger_fetch(&label);
+                }
+            });
         }
     }
 

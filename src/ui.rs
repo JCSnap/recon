@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -192,15 +190,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    // Aggregate sessions by agent label
-    let mut counts: HashMap<&str, (usize, u64)> = HashMap::new(); // agent → (sessions, tokens)
-    for s in &app.sessions {
-        let e = counts.entry(s.agent.as_str()).or_default();
-        e.0 += 1;
-        e.1 += s.total_input_tokens + s.total_output_tokens;
-    }
-
+pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
     let fmt_agent = |label: &str, display: &str, available: bool| -> Vec<Span<'static>> {
         if !available {
             return vec![
@@ -208,36 +198,26 @@ fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rec
                 Span::styled(": N/A  ", Style::default().fg(Color::DarkGray)),
             ];
         }
-        let (sessions, tokens) = counts.get(label).copied().unwrap_or((0, 0));
-        let token_str = if tokens >= 1000 {
-            format!("{}k", tokens / 1000)
-        } else {
-            tokens.to_string()
-        };
 
-        // Usage % from the fetched data.
-        let usage_str = match usage::get(label) {
+        let has_sessions = app.sessions.iter().any(|s| s.agent == label);
+
+        let detail = match usage::get(label) {
             Some(info) => {
                 let pct_part = info.five_hour_pct
                     .map(|p| {
-                        let color_hint = if p >= 90 { "!" } else if p >= 75 { "~" } else { "" };
-                        format!("{color_hint}{p}%")
+                        let hint = if p >= 90 { "!" } else if p >= 75 { "~" } else { "" };
+                        format!("{hint}{p}%")
                     })
                     .unwrap_or_else(|| "?%".to_string());
                 let reset_part = info.resets_at
                     .map(|r| format!(" resets {r}"))
                     .unwrap_or_default();
-                format!(" · {pct_hint}{reset_part}", pct_hint = pct_part)
+                format!(": {pct_part}{reset_part}  ")
             }
-            None if sessions > 0 => " · …".to_string(), // fetching
-            None => String::new(),
+            None if has_sessions => ": …  ".to_string(),
+            None => ": —  ".to_string(),
         };
 
-        let detail = if sessions > 0 {
-            format!(": {} · {}t{usage_str}  ", sessions, token_str)
-        } else {
-            format!(": —{usage_str}  ")
-        };
         vec![
             Span::styled(display.to_string(), Style::default().fg(Color::Cyan)),
             Span::styled(detail, Style::default().fg(Color::White)),
@@ -248,7 +228,6 @@ fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rec
     let codex_ok = tmux::is_installed("codex");
     let gemini_ok = tmux::is_installed("gemini");
 
-    // cc2 uses the same binary as cc1; it's "available" if claude is available
     let mut spans: Vec<Span> = Vec::new();
     spans.extend(fmt_agent("claude", "cc1", claude_ok));
     spans.extend(fmt_agent("claude-2", "cc2", claude_ok));
