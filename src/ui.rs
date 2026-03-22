@@ -74,8 +74,6 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 .map(format_timestamp)
                 .unwrap_or_else(|| "—".to_string());
 
-            let cwd_display = shorten_home(&session.cwd);
-
             // Project: repo::relative_dir::branch
             let project_cell = {
                 let mut spans = vec![Span::raw(&session.project_name)];
@@ -98,10 +96,6 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                     Style::default().fg(status_color),
                 ),
             ]));
-
-            // Directory: dimmed
-            let dir_cell =
-                Cell::from(cwd_display).style(Style::default().fg(Color::DarkGray));
 
             let row = Row::new(vec![
                 Cell::from(num),
@@ -162,16 +156,6 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(footer, area);
 }
 
-/// Replace home directory prefix with ~.
-fn shorten_home(path: &str) -> String {
-    if let Some(home) = dirs::home_dir() {
-        let home_str = home.to_string_lossy();
-        if let Some(rest) = path.strip_prefix(home_str.as_ref()) {
-            return format!("~{rest}");
-        }
-    }
-    path.to_string()
-}
 
 /// Format an ISO timestamp into a relative or short time string.
 fn format_timestamp(ts: &str) -> String {
