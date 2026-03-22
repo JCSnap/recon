@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    text::{Line, Span},
     widgets::{Block, Borders, Cell, Row, Table, Paragraph},
 };
 
@@ -35,6 +35,13 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     );
+
+    // Pre-compute row heights so we can position message overlays later.
+    let row_heights: Vec<u16> = app
+        .sessions
+        .iter()
+        .map(|s| if s.last_user_msg.is_some() { 2 } else { 1 })
+        .collect();
 
     let rows: Vec<Row> = app
         .sessions
@@ -97,28 +104,16 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             ]));
 
-            let (session_cell, row_height) = match &session.last_user_msg {
-                Some(msg) => {
-                    let preview = truncate_str(msg, 60);
-                    let cell = Cell::from(Text::from(vec![
-                        Line::from(tmux_name.to_string()),
-                        Line::from(Span::styled(preview, Style::default().fg(Color::White))),
-                    ]));
-                    (cell, 2)
-                }
-                None => (Cell::from(tmux_name.to_string()), 1),
-            };
-
             let row = Row::new(vec![
                 Cell::from(num),
-                session_cell,
+                Cell::from(tmux_name.to_string()),
                 project_cell,
                 status_cell,
                 Cell::from(session.model_display()),
                 Cell::from(session.token_display()).style(token_style),
                 Cell::from(activity),
             ])
-            .height(row_height);
+            .height(row_heights[i]);
 
             if session.status == SessionStatus::Input {
                 row.style(Style::default().bg(Color::Rgb(50, 40, 0)))
@@ -149,6 +144,46 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         );
 
     frame.render_widget(table, area);
+
+    // Overlay full-width message previews on the second line of each tall row.
+    // Layout: border(1) + header(1) = first data row at area.y + 2.
+    if area.height < 3 || area.width < 4 {
+        return;
+    }
+    let inner_width = area.width.saturating_sub(2); // exclude left+right borders
+    let mut row_y = area.y + 2; // top border + header
+    for (i, session) in app.sessions.iter().enumerate() {
+        if row_y + 1 >= area.y + area.height.saturating_sub(1) {
+            break; // no space below this row (bottom border)
+        }
+        if let Some(msg) = &session.last_user_msg {
+            let msg_y = row_y + 1;
+            if msg_y < area.y + area.height.saturating_sub(1) {
+                let max_chars = inner_width.saturating_sub(2) as usize;
+                let preview = truncate_str(msg, max_chars);
+                let bg = if session.status == SessionStatus::Input {
+                    Color::Rgb(50, 40, 0)
+                } else if i == app.selected {
+                    Color::DarkGray
+                } else {
+                    Color::Reset
+                };
+                let msg_rect = Rect {
+                    x: area.x + 1,
+                    y: msg_y,
+                    width: inner_width,
+                    height: 1,
+                };
+                let para = Paragraph::new(Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(preview, Style::default().fg(Color::White)),
+                ]))
+                .style(Style::default().bg(bg));
+                frame.render_widget(para, msg_rect);
+            }
+        }
+        row_y += row_heights[i];
+    }
 }
 
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {

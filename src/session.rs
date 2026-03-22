@@ -398,11 +398,22 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         }
     }
 
-    // Sort by last activity (most recent first), then by started_at as tiebreaker
+    // Sort: tagged sessions first (alphanumeric by tag), then untagged by most recent activity.
     sessions.sort_by(|a, b| {
-        b.last_activity
-            .cmp(&a.last_activity)
-            .then(b.started_at.cmp(&a.started_at))
+        match (&a.tag, &b.tag) {
+            (Some(ta), Some(tb)) => {
+                // Natural sort: compare numeric prefix if both parse as numbers
+                match (ta.parse::<u64>(), tb.parse::<u64>()) {
+                    (Ok(na), Ok(nb)) => na.cmp(&nb),
+                    _ => ta.cmp(tb),
+                }
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => b.last_activity
+                .cmp(&a.last_activity)
+                .then(b.started_at.cmp(&a.started_at)),
+        }
     });
     sessions
 }
@@ -1146,10 +1157,8 @@ fn pane_status(session_name: &str) -> SessionStatus {
             continue;
         }
 
-        // Input: permission prompt or bypass mode indicator
-        if (lines_checked == 0 && trimmed.contains("Esc to cancel"))
-            || trimmed.contains("bypass permissions on")
-        {
+        // Input: permission prompt on the last non-empty line
+        if lines_checked == 0 && trimmed.contains("Esc to cancel") {
             return SessionStatus::Input;
         }
 
