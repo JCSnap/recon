@@ -36,6 +36,7 @@ pub struct Session {
     pub relative_dir: Option<String>,
     pub tmux_session: Option<String>,
     pub tag: Option<String>,
+    pub agent: String,
     pub model: Option<String>,
     pub last_user_msg: Option<String>,
     pub total_input_tokens: u64,
@@ -233,6 +234,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 relative_dir,
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+                agent: detect_agent(&live.tmux_session),
                 model: info.model,
                 last_user_msg: info.last_user_msg,
                 effort: info.effort,
@@ -328,6 +330,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 cwd,
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+                agent: detect_agent(&live.tmux_session),
                 model: info.model,
                 last_user_msg: info.last_user_msg,
                 effort: info.effort,
@@ -355,6 +358,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 cwd: live.pane_cwd.clone(),
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+                agent: detect_agent(&live.tmux_session),
                 model: None,
                 last_user_msg: None,
                 effort: None,
@@ -907,6 +911,22 @@ fn read_tmux_env(session_name: &str, var: &str) -> Option<String> {
     // Output format: "VAR=value\n"
     let line = String::from_utf8_lossy(&output.stdout);
     line.trim().split_once('=').map(|(_, v)| v.to_string())
+}
+
+/// Detect which agent a tmux session is running.
+/// Reads RECON_AGENT env var (set by `recon launch`), falling back to
+/// checking CLAUDE_CONFIG_DIR for claude-2 detection.
+fn detect_agent(tmux_session: &str) -> String {
+    if let Some(agent) = read_tmux_env(tmux_session, "RECON_AGENT") {
+        return agent;
+    }
+    // Fallback: if CLAUDE_CONFIG_DIR points to ~/.claude-2, it's claude-2
+    if let Some(cfg) = read_tmux_env(tmux_session, "CLAUDE_CONFIG_DIR") {
+        if cfg.contains("claude-2") {
+            return "claude-2".to_string();
+        }
+    }
+    "claude".to_string()
 }
 
 /// Parse `--resume <session-id>` from the process command line via ps.

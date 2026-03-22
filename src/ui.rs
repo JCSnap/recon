@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -8,16 +10,19 @@ use ratatui::{
 
 use crate::app::App;
 use crate::session::SessionStatus;
+use crate::tmux;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Min(1),
         Constraint::Length(1),
+        Constraint::Length(1),
     ])
     .split(frame.area());
 
     render_table(frame, app, chunks[0]);
-    render_footer(frame, chunks[1]);
+    render_account_stats(frame, app, chunks[1]);
+    render_footer(frame, chunks[2]);
 }
 
 fn render_table(frame: &mut Frame, app: &App, area: Rect) {
@@ -118,7 +123,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
             if session.status == SessionStatus::Input {
                 row.style(Style::default().bg(Color::Rgb(50, 40, 0)))
             } else if i == app.selected {
-                row.style(Style::default().bg(Color::DarkGray))
+                row.style(Style::default().bg(Color::Rgb(40, 40, 50)))
             } else {
                 row
             }
@@ -164,7 +169,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 let bg = if session.status == SessionStatus::Input {
                     Color::Rgb(50, 40, 0)
                 } else if i == app.selected {
-                    Color::DarkGray
+                    Color::Rgb(40, 40, 50)
                 } else {
                     Color::Reset
                 };
@@ -184,6 +189,53 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         }
         row_y += row_heights[i];
     }
+}
+
+fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
+    // Aggregate sessions by agent label
+    let mut counts: HashMap<&str, (usize, u64)> = HashMap::new(); // agent → (sessions, tokens)
+    for s in &app.sessions {
+        let e = counts.entry(s.agent.as_str()).or_default();
+        e.0 += 1;
+        e.1 += s.total_input_tokens + s.total_output_tokens;
+    }
+
+    let fmt_agent = |label: &str, display: &str, available: bool| -> Vec<Span<'static>> {
+        if !available {
+            return vec![
+                Span::styled(display.to_string(), Style::default().fg(Color::DarkGray)),
+                Span::styled(": N/A  ", Style::default().fg(Color::DarkGray)),
+            ];
+        }
+        let (sessions, tokens) = counts.get(label).copied().unwrap_or((0, 0));
+        let token_str = if tokens >= 1000 {
+            format!("{}k", tokens / 1000)
+        } else {
+            tokens.to_string()
+        };
+        let detail = if sessions > 0 {
+            format!(": {} · {}t  ", sessions, token_str)
+        } else {
+            ": —  ".to_string()
+        };
+        vec![
+            Span::styled(display.to_string(), Style::default().fg(Color::Cyan)),
+            Span::styled(detail, Style::default().fg(Color::White)),
+        ]
+    };
+
+    let claude_ok = tmux::is_installed("claude");
+    let codex_ok = tmux::is_installed("codex");
+    let gemini_ok = tmux::is_installed("gemini");
+
+    // cc2 uses the same binary as cc1; it's "available" if claude is available
+    let mut spans: Vec<Span> = Vec::new();
+    spans.extend(fmt_agent("claude", "cc1", claude_ok));
+    spans.extend(fmt_agent("claude-2", "cc2", claude_ok));
+    spans.extend(fmt_agent("codex", "codex", codex_ok));
+    spans.extend(fmt_agent("gemini", "gemini", gemini_ok));
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {

@@ -94,6 +94,8 @@ pub fn create_session(name: &str, cwd: &str, agent: Agent, tag: Option<&str>) ->
         args.push("-e".into());
         args.push(format!("RECON_TAG={t}"));
     }
+    args.push("-e".into());
+    args.push(format!("RECON_AGENT={}", agent.label()));
     args.push(cmd_path);
     args.extend(flags.iter().map(|s| s.to_string()));
 
@@ -190,6 +192,10 @@ fn session_exists(name: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+pub fn is_installed(name: &str) -> bool {
+    which_tool(name).is_some()
 }
 
 fn which_tool(name: &str) -> Option<String> {
