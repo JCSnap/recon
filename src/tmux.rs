@@ -16,23 +16,80 @@ pub fn switch_to_session(name: &str) {
     }
 }
 
-/// Launch claude in a new tmux session with the given name and working directory.
+/// Which AI agent to launch in the session.
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum Agent {
+    #[default]
+    Claude1,
+    Claude2,
+    Codex,
+    Gemini,
+}
+
+impl Agent {
+    pub fn all() -> &'static [Agent] {
+        &[Agent::Claude1, Agent::Claude2, Agent::Codex, Agent::Gemini]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Agent::Claude1 => "claude",
+            Agent::Claude2 => "claude-2",
+            Agent::Codex => "codex",
+            Agent::Gemini => "gemini",
+        }
+    }
+
+    /// Returns (binary_path, optional_env_var as "KEY=VALUE").
+    fn command_info(&self) -> (String, Option<String>) {
+        match self {
+            Agent::Claude1 => {
+                let path = which_tool("claude").unwrap_or_else(|| "claude".to_string());
+                (path, None)
+            }
+            Agent::Claude2 => {
+                let path = which_tool("claude").unwrap_or_else(|| "claude".to_string());
+                let dir = dirs::home_dir()
+                    .map(|h| h.join(".claude-2").to_string_lossy().to_string())
+                    .unwrap_or_else(|| "~/.claude-2".to_string());
+                (path, Some(format!("CLAUDE_CONFIG_DIR={dir}")))
+            }
+            Agent::Codex => {
+                let path = which_tool("codex").unwrap_or_else(|| "codex".to_string());
+                (path, None)
+            }
+            Agent::Gemini => {
+                let path = which_tool("gemini").unwrap_or_else(|| "gemini".to_string());
+                (path, None)
+            }
+        }
+    }
+}
+
+/// Launch an AI agent in a new tmux session with the given name and working directory.
 /// Returns the session name on success.
-pub fn create_session(name: &str, cwd: &str) -> Result<String, String> {
+pub fn create_session(name: &str, cwd: &str, agent: Agent) -> Result<String, String> {
     let base_name = sanitize_session_name(name);
     let session_name = unique_session_name(&base_name);
 
-    let claude_path = which_claude().unwrap_or_else(|| "claude".to_string());
+    let (cmd_path, maybe_env) = agent.command_info();
+
+    let mut args: Vec<String> = vec![
+        "new-session".into(),
+        "-d".into(),
+        "-s".into(),
+        session_name.clone(),
+        "-c".into(),
+        cwd.to_string(),
+    ];
+    if let Some(env_str) = maybe_env {
+        args.push("-e".into());
+        args.push(env_str);
+    }
+    args.push(cmd_path);
+
     let status = Command::new("tmux")
-        .args([
-            "new-session",
-            "-d",
-            "-s",
-            &session_name,
-            "-c",
-            cwd,
-            &claude_path,
-        ])
+        .args(&args)
         .status()
         .map_err(|e| format!("Failed to create tmux session: {e}"))?;
 
@@ -62,7 +119,7 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
     let base_name = sanitize_session_name(&tmux_name);
     let session_name = unique_session_name(&base_name);
 
-    let claude_path = which_claude().unwrap_or_else(|| "claude".to_string());
+    let claude_path = which_tool("claude").unwrap_or_else(|| "claude".to_string());
     // Store the original session-id in the tmux session environment so recon can
     // find the right JSONL without parsing process command lines.
     let env_var = format!("RECON_RESUMED_FROM={session_id}");
@@ -126,8 +183,8 @@ fn session_exists(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn which_claude() -> Option<String> {
-    let output = Command::new("which").arg("claude").output().ok()?;
+fn which_tool(name: &str) -> Option<String> {
+    let output = Command::new("which").arg(name).output().ok()?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if path.is_empty() { None } else { Some(path) }
 }

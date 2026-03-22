@@ -36,7 +36,7 @@ fn main() -> io::Result<()> {
         }
         Some(Command::Launch { name_only }) => {
             let (default_name, cwd) = tmux::default_new_session_info();
-            match tmux::create_session(&default_name, &cwd) {
+            match tmux::create_session(&default_name, &cwd, tmux::Agent::default()) {
                 Ok(name) => {
                     if name_only {
                         print!("{name}");
