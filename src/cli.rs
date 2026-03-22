@@ -19,6 +19,9 @@ pub enum Command {
         /// Short label shown in the recon dashboard (e.g. tab number)
         #[arg(value_name = "TAG")]
         tag: Option<String>,
+        /// Agent to launch: claude, claude-2, codex, gemini (default: claude)
+        #[arg(long, value_name = "AGENT")]
+        agent: Option<String>,
         /// Print only the session name (no attach)
         #[arg(long)]
         name_only: bool,

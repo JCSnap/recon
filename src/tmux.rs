@@ -31,6 +31,10 @@ impl Agent {
         &[Agent::Claude1, Agent::Claude2, Agent::Codex, Agent::Gemini]
     }
 
+    pub fn from_str(s: &str) -> Option<Agent> {
+        Agent::all().iter().find(|a| a.label() == s).copied()
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Agent::Claude1 => "claude",

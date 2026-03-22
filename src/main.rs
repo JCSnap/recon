@@ -34,9 +34,13 @@ fn main() -> io::Result<()> {
                 tmux::switch_to_session(&name);
             }
         }
-        Some(Command::Launch { tag, name_only }) => {
+        Some(Command::Launch { tag, agent, name_only }) => {
+            let agent = agent
+                .as_deref()
+                .and_then(tmux::Agent::from_str)
+                .unwrap_or_default();
             let (default_name, cwd) = tmux::default_new_session_info();
-            match tmux::create_session(&default_name, &cwd, tmux::Agent::default(), tag.as_deref()) {
+            match tmux::create_session(&default_name, &cwd, agent, tag.as_deref()) {
                 Ok(name) => {
                     if name_only {
                         print!("{name}");

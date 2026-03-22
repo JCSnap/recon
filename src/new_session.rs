@@ -1,6 +1,6 @@
 use std::io;
 
-use crossterm::event::{self, Event, KeyCode, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout},
@@ -12,14 +12,12 @@ use ratatui::{
 use crate::tmux::{self, Agent};
 
 enum Field {
-    Name,
-    Cwd,
+    Tag,
     AgentSelect,
 }
 
 pub struct NewSessionForm {
-    name: String,
-    cwd: String,
+    tag: String,
     cursor_pos: usize,
     active: Field,
     agent_index: usize,
@@ -28,13 +26,10 @@ pub struct NewSessionForm {
 
 impl NewSessionForm {
     pub fn new() -> Self {
-        let (name, cwd) = tmux::default_new_session_info();
-        let cursor_pos = name.len();
         NewSessionForm {
-            name,
-            cwd,
-            cursor_pos,
-            active: Field::Name,
+            tag: String::new(),
+            cursor_pos: 0,
+            active: Field::Tag,
             agent_index: 0,
             result: None,
         }
@@ -44,19 +39,16 @@ impl NewSessionForm {
         Agent::all()[self.agent_index]
     }
 
-    fn active_text(&self) -> &str {
-        match self.active {
-            Field::Name => &self.name,
-            Field::Cwd => &self.cwd,
-            Field::AgentSelect => "",
-        }
-    }
-
-    fn active_text_mut(&mut self) -> &mut String {
-        match self.active {
-            Field::Name => &mut self.name,
-            Field::Cwd => &mut self.cwd,
-            Field::AgentSelect => &mut self.name, // unreachable; guarded by early returns
+    fn launch(&mut self) {
+        let (name, cwd) = tmux::default_new_session_info();
+        let tag = if self.tag.trim().is_empty() {
+            None
+        } else {
+            Some(self.tag.trim())
+        };
+        match tmux::create_session(&name, &cwd, self.selected_agent(), tag) {
+            Ok(name) => self.result = Some(name),
+            Err(_) => self.result = Some(String::new()),
         }
     }
 
@@ -67,40 +59,12 @@ impl NewSessionForm {
             }
             KeyCode::Enter => {
                 match self.active {
-                    Field::Name => {
-                        if self.name.trim().is_empty() {
-                            return;
-                        }
-                        self.active = Field::Cwd;
-                        self.cursor_pos = self.cwd.len();
-                        return;
-                    }
-                    Field::Cwd => {
+                    Field::Tag => {
                         self.active = Field::AgentSelect;
-                        return;
                     }
-                    Field::AgentSelect => {}
-                }
-                if self.name.trim().is_empty() {
-                    return;
-                }
-                let cwd = if self.cwd.trim().is_empty() {
-                    ".".to_string()
-                } else {
-                    let c = self.cwd.trim().to_string();
-                    if let Some(rest) = c.strip_prefix('~') {
-                        if let Some(home) = dirs::home_dir() {
-                            format!("{}{rest}", home.display())
-                        } else {
-                            c
-                        }
-                    } else {
-                        c
+                    Field::AgentSelect => {
+                        self.launch();
                     }
-                };
-                match tmux::create_session(self.name.trim(), &cwd, self.selected_agent(), None) {
-                    Ok(name) => self.result = Some(name),
-                    Err(_) => self.result = Some(String::new()),
                 }
             }
             KeyCode::Left => {
@@ -118,80 +82,49 @@ impl NewSessionForm {
                     self.agent_index = (self.agent_index + 1) % Agent::all().len();
                     return;
                 }
-                let len = self.active_text().len();
-                if self.cursor_pos < len {
+                if self.cursor_pos < self.tag.len() {
                     self.cursor_pos += 1;
                 }
             }
             KeyCode::Tab | KeyCode::Down => {
                 match self.active {
-                    Field::Name => {
-                        self.active = Field::Cwd;
-                        self.cursor_pos = self.cwd.len();
-                    }
-                    Field::Cwd => {
-                        self.active = Field::AgentSelect;
-                    }
+                    Field::Tag => { self.active = Field::AgentSelect; }
                     Field::AgentSelect => {
-                        self.active = Field::Name;
-                        self.cursor_pos = self.name.len();
+                        self.active = Field::Tag;
+                        self.cursor_pos = self.tag.len();
                     }
                 }
             }
             KeyCode::BackTab | KeyCode::Up => {
                 match self.active {
-                    Field::Name => {
-                        self.active = Field::AgentSelect;
-                    }
-                    Field::Cwd => {
-                        self.active = Field::Name;
-                        self.cursor_pos = self.name.len();
-                    }
+                    Field::Tag => { self.active = Field::AgentSelect; }
                     Field::AgentSelect => {
-                        self.active = Field::Cwd;
-                        self.cursor_pos = self.cwd.len();
+                        self.active = Field::Tag;
+                        self.cursor_pos = self.tag.len();
                     }
                 }
             }
             KeyCode::Backspace => {
-                if matches!(self.active, Field::AgentSelect) {
-                    return;
-                }
+                if matches!(self.active, Field::AgentSelect) { return; }
                 let pos = self.cursor_pos;
                 if pos > 0 {
-                    self.active_text_mut().remove(pos - 1);
+                    self.tag.remove(pos - 1);
                     self.cursor_pos = pos - 1;
                 }
             }
             KeyCode::Delete => {
-                if matches!(self.active, Field::AgentSelect) {
-                    return;
-                }
+                if matches!(self.active, Field::AgentSelect) { return; }
                 let pos = self.cursor_pos;
-                let len = self.active_text().len();
-                if pos < len {
-                    self.active_text_mut().remove(pos);
+                if pos < self.tag.len() {
+                    self.tag.remove(pos);
                 }
             }
-            KeyCode::Home => {
-                self.cursor_pos = 0;
-            }
-            KeyCode::End => {
-                self.cursor_pos = self.active_text().len();
-            }
-            KeyCode::Char('a') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor_pos = 0;
-            }
-            KeyCode::Char('e') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.cursor_pos = self.active_text().len();
-            }
-            KeyCode::Char('u') if event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.active_text_mut().clear();
-                self.cursor_pos = 0;
-            }
+            KeyCode::Home => { self.cursor_pos = 0; }
+            KeyCode::End => { self.cursor_pos = self.tag.len(); }
             KeyCode::Char(c) => {
+                if matches!(self.active, Field::AgentSelect) { return; }
                 let pos = self.cursor_pos;
-                self.active_text_mut().insert(pos, c);
+                self.tag.insert(pos, c);
                 self.cursor_pos = pos + 1;
             }
             _ => {}
@@ -201,67 +134,35 @@ impl NewSessionForm {
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
 
-        // Name input block (3 rows: border + content + border)
-        let name_active = matches!(self.active, Field::Name);
-        let name_border = if name_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        let name_block = Block::default()
+        let tag_active = matches!(self.active, Field::Tag);
+        let tag_block = Block::default()
             .borders(Borders::ALL)
-            .title(" Name ")
-            .border_style(name_border);
+            .title(" Tag (optional) ")
+            .border_style(Style::default().fg(if tag_active { Color::Cyan } else { Color::DarkGray }));
 
-        // Dir input block
-        let cwd_active = matches!(self.active, Field::Cwd);
-        let cwd_border = if cwd_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
-        let cwd_block = Block::default()
-            .borders(Borders::ALL)
-            .title(" Directory ")
-            .border_style(cwd_border);
-
-        // Agent selector block
         let agent_active = matches!(self.active, Field::AgentSelect);
-        let agent_border = if agent_active {
-            Style::default().fg(Color::Cyan)
-        } else {
-            Style::default().fg(Color::DarkGray)
-        };
         let agent_block = Block::default()
             .borders(Borders::ALL)
             .title(" Agent ")
-            .border_style(agent_border);
+            .border_style(Style::default().fg(if agent_active { Color::Cyan } else { Color::DarkGray }));
 
         let rows = Layout::vertical([
-            Constraint::Length(3), // Name box
-            Constraint::Length(3), // Dir box
+            Constraint::Length(3), // Tag box
             Constraint::Length(3), // Agent box
             Constraint::Length(1), // Hints
             Constraint::Min(0),
         ])
         .split(area);
 
-        let name_inner = name_block.inner(rows[0]);
-        frame.render_widget(name_block, rows[0]);
+        let tag_inner = tag_block.inner(rows[0]);
+        frame.render_widget(tag_block, rows[0]);
         frame.render_widget(
-            Paragraph::new(self.name.as_str()).style(Style::default().fg(Color::White)),
-            name_inner,
+            Paragraph::new(self.tag.as_str()).style(Style::default().fg(Color::White)),
+            tag_inner,
         );
 
-        let cwd_inner = cwd_block.inner(rows[1]);
-        frame.render_widget(cwd_block, rows[1]);
-        frame.render_widget(
-            Paragraph::new(self.cwd.as_str()).style(Style::default().fg(Color::White)),
-            cwd_inner,
-        );
-
-        let agent_inner = agent_block.inner(rows[2]);
-        frame.render_widget(agent_block, rows[2]);
+        let agent_inner = agent_block.inner(rows[1]);
+        frame.render_widget(agent_block, rows[1]);
         let agent_label = self.selected_agent().label();
         let agent_line = if agent_active {
             Line::from(vec![
@@ -274,17 +175,8 @@ impl NewSessionForm {
         };
         frame.render_widget(Paragraph::new(agent_line), agent_inner);
 
-        // Hints
         let hint = match self.active {
-            Field::Name => Line::from(vec![
-                Span::styled(" Enter", Style::default().fg(Color::Cyan)),
-                Span::raw(" next  "),
-                Span::styled("Tab", Style::default().fg(Color::Cyan)),
-                Span::raw(" switch  "),
-                Span::styled("Esc", Style::default().fg(Color::Cyan)),
-                Span::raw(" cancel"),
-            ]),
-            Field::Cwd => Line::from(vec![
+            Field::Tag => Line::from(vec![
                 Span::styled(" Enter", Style::default().fg(Color::Cyan)),
                 Span::raw(" next  "),
                 Span::styled("Tab", Style::default().fg(Color::Cyan)),
@@ -296,25 +188,22 @@ impl NewSessionForm {
                 Span::styled(" ◀▶", Style::default().fg(Color::Cyan)),
                 Span::raw(" select  "),
                 Span::styled("Enter", Style::default().fg(Color::Cyan)),
-                Span::raw(" create  "),
+                Span::raw(" launch  "),
                 Span::styled("Tab", Style::default().fg(Color::Cyan)),
                 Span::raw(" switch  "),
                 Span::styled("Esc", Style::default().fg(Color::Cyan)),
                 Span::raw(" cancel"),
             ]),
         };
-        frame.render_widget(Paragraph::new(hint), rows[3]);
+        frame.render_widget(Paragraph::new(hint), rows[2]);
 
-        // Cursor (only for text fields)
-        match self.active {
-            Field::Name => frame.set_cursor_position((name_inner.x + self.cursor_pos as u16, name_inner.y)),
-            Field::Cwd => frame.set_cursor_position((cwd_inner.x + self.cursor_pos as u16, cwd_inner.y)),
-            Field::AgentSelect => {} // no cursor for selector
+        if matches!(self.active, Field::Tag) {
+            frame.set_cursor_position((tag_inner.x + self.cursor_pos as u16, tag_inner.y));
         }
     }
 }
 
-/// Run the new-session form as a standalone TUI — identical setup to the main dashboard.
+/// Run the new-session form as a standalone TUI.
 pub fn run_new_session_form() -> io::Result<Option<String>> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -328,11 +217,7 @@ pub fn run_new_session_form() -> io::Result<Option<String>> {
         terminal.draw(|f| form.render(f))?;
 
         if let Some(ref result) = form.result {
-            let name = if result.is_empty() {
-                None
-            } else {
-                Some(result.clone())
-            };
+            let name = if result.is_empty() { None } else { Some(result.clone()) };
 
             crossterm::terminal::disable_raw_mode()?;
             crossterm::execute!(
