@@ -415,10 +415,18 @@ fn render_rooms(frame: &mut Frame, app: &App, area: Rect) {
 
     let v_chunks = Layout::vertical([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
         .split(area);
-    let top_h = Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-        .split(v_chunks[0]);
-    let bot_h = Layout::horizontal([Constraint::Ratio(1, 2), Constraint::Ratio(1, 2)])
-        .split(v_chunks[1]);
+
+    // Split each row horizontally proportional to session counts.
+    // Empty slots get weight 1 so they still show as a thin placeholder.
+    let row_h = |r0: Option<&&Room>, r1: Option<&&Room>| {
+        let w0 = r0.map(|r| r.session_indices.len()).unwrap_or(0).max(1) as u32;
+        let w1 = r1.map(|r| r.session_indices.len()).unwrap_or(0).max(1) as u32;
+        let total = w0 + w1;
+        Layout::horizontal([Constraint::Ratio(w0, total), Constraint::Ratio(w1, total)])
+    };
+
+    let top_h = row_h(page_rooms.get(0), page_rooms.get(1)).split(v_chunks[0]);
+    let bot_h = row_h(page_rooms.get(2), page_rooms.get(3)).split(v_chunks[1]);
     let cells = [top_h[0], top_h[1], bot_h[0], bot_h[1]];
 
     for (i, cell) in cells.iter().enumerate() {
@@ -485,9 +493,10 @@ fn render_room(frame: &mut Frame, app: &App, room: &Room, area: Rect, slot_num: 
         if row_idx >= v_chunks.len() {
             break;
         }
+        let n = indices.len() as u32;
         let col_constraints: Vec<Constraint> = indices
             .iter()
-            .map(|_| Constraint::Length(CHAR_WIDTH))
+            .map(|_| Constraint::Ratio(1, n))
             .collect();
         let h_chunks = Layout::horizontal(col_constraints).split(v_chunks[row_idx]);
 
@@ -531,15 +540,19 @@ fn render_character(frame: &mut Frame, session: &Session, area: Rect, tick: u64,
     let sprite_lines = render_sprite_lines(sprite, palette);
     lines.extend(sprite_lines);
 
-    // Session name
+    // Session name — prefix with tag if set (e.g. "[1] myapp")
     let name = session.tmux_session.as_deref().unwrap_or("???");
+    let name_display = match &session.tag {
+        Some(t) => format!("[{t}] {name}"),
+        None => name.to_string(),
+    };
     let name_style = if is_selected {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
     lines.push(Line::from(Span::styled(
-        truncate_str(name, area.width as usize),
+        truncate_str(&name_display, area.width as usize),
         name_style,
     )));
 
