@@ -152,7 +152,7 @@ impl App {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "claude".to_string());
-                        if let Ok(name) = tmux::create_session(&default_name, &cwd, tmux::Agent::default()) {
+                        if let Ok(name) = tmux::create_session(&default_name, &cwd, tmux::Agent::default(), None) {
                             tmux::switch_to_session(&name);
                             self.should_quit = true;
                         }

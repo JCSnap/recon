@@ -48,6 +48,7 @@ impl NewSessionForm {
         match self.active {
             Field::Name => &self.name,
             Field::Cwd => &self.cwd,
+            Field::AgentSelect => "",
         }
     }
 
@@ -55,6 +56,7 @@ impl NewSessionForm {
         match self.active {
             Field::Name => &mut self.name,
             Field::Cwd => &mut self.cwd,
+            Field::AgentSelect => &mut self.name, // unreachable; guarded by early returns
         }
     }
 
@@ -96,7 +98,7 @@ impl NewSessionForm {
                         c
                     }
                 };
-                match tmux::create_session(self.name.trim(), &cwd, self.selected_agent()) {
+                match tmux::create_session(self.name.trim(), &cwd, self.selected_agent(), None) {
                     Ok(name) => self.result = Some(name),
                     Err(_) => self.result = Some(String::new()),
                 }

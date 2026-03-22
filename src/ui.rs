@@ -42,7 +42,10 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, session)| {
-            let num = format!(" {} ", i + 1);
+            let num = match &session.tag {
+                Some(t) => format!(" {t} "),
+                None => format!(" {} ", i + 1),
+            };
 
             let tmux_name = session
                 .tmux_session

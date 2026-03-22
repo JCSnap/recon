@@ -16,6 +16,9 @@ pub enum Command {
     New,
     /// Create a new claude session in the current directory
     Launch {
+        /// Short label shown in the recon dashboard (e.g. tab number)
+        #[arg(value_name = "TAG")]
+        tag: Option<String>,
         /// Print only the session name (no attach)
         #[arg(long)]
         name_only: bool,

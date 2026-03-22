@@ -40,27 +40,27 @@ impl Agent {
         }
     }
 
-    /// Returns (binary_path, optional_env_var as "KEY=VALUE").
-    fn command_info(&self) -> (String, Option<String>) {
+    /// Returns (binary_path, flags, optional_env_var as "KEY=VALUE").
+    fn command_info(&self) -> (String, &'static [&'static str], Option<String>) {
         match self {
             Agent::Claude1 => {
                 let path = which_tool("claude").unwrap_or_else(|| "claude".to_string());
-                (path, None)
+                (path, &["--dangerously-skip-permissions"], None)
             }
             Agent::Claude2 => {
                 let path = which_tool("claude").unwrap_or_else(|| "claude".to_string());
                 let dir = dirs::home_dir()
                     .map(|h| h.join(".claude-2").to_string_lossy().to_string())
                     .unwrap_or_else(|| "~/.claude-2".to_string());
-                (path, Some(format!("CLAUDE_CONFIG_DIR={dir}")))
+                (path, &["--dangerously-skip-permissions"], Some(format!("CLAUDE_CONFIG_DIR={dir}")))
             }
             Agent::Codex => {
                 let path = which_tool("codex").unwrap_or_else(|| "codex".to_string());
-                (path, None)
+                (path, &["--full-auto"], None)
             }
             Agent::Gemini => {
                 let path = which_tool("gemini").unwrap_or_else(|| "gemini".to_string());
-                (path, None)
+                (path, &["-y"], None)
             }
         }
     }
@@ -68,11 +68,11 @@ impl Agent {
 
 /// Launch an AI agent in a new tmux session with the given name and working directory.
 /// Returns the session name on success.
-pub fn create_session(name: &str, cwd: &str, agent: Agent) -> Result<String, String> {
+pub fn create_session(name: &str, cwd: &str, agent: Agent, tag: Option<&str>) -> Result<String, String> {
     let base_name = sanitize_session_name(name);
     let session_name = unique_session_name(&base_name);
 
-    let (cmd_path, maybe_env) = agent.command_info();
+    let (cmd_path, flags, maybe_env) = agent.command_info();
 
     let mut args: Vec<String> = vec![
         "new-session".into(),
@@ -86,7 +86,12 @@ pub fn create_session(name: &str, cwd: &str, agent: Agent) -> Result<String, Str
         args.push("-e".into());
         args.push(env_str);
     }
+    if let Some(t) = tag {
+        args.push("-e".into());
+        args.push(format!("RECON_TAG={t}"));
+    }
     args.push(cmd_path);
+    args.extend(flags.iter().map(|s| s.to_string()));
 
     let status = Command::new("tmux")
         .args(&args)
