@@ -644,6 +644,7 @@ mod tests {
             tmux_session: None,
             tag: None,
             model: None,
+            last_user_msg: None,
             effort: None,
             total_input_tokens: 0,
             total_output_tokens: 0,

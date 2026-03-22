@@ -2,7 +2,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
+    text::{Line, Span, Text},
     widgets::{Block, Borders, Cell, Row, Table, Paragraph},
 };
 
@@ -97,15 +97,28 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             ]));
 
+            let (session_cell, row_height) = match &session.last_user_msg {
+                Some(msg) => {
+                    let preview = truncate_str(msg, 60);
+                    let cell = Cell::from(Text::from(vec![
+                        Line::from(tmux_name.to_string()),
+                        Line::from(Span::styled(preview, Style::default().fg(Color::White))),
+                    ]));
+                    (cell, 2)
+                }
+                None => (Cell::from(tmux_name.to_string()), 1),
+            };
+
             let row = Row::new(vec![
                 Cell::from(num),
-                Cell::from(tmux_name.to_string()),
+                session_cell,
                 project_cell,
                 status_cell,
                 Cell::from(session.model_display()),
                 Cell::from(session.token_display()).style(token_style),
                 Cell::from(activity),
-            ]);
+            ])
+            .height(row_height);
 
             if session.status == SessionStatus::Input {
                 row.style(Style::default().bg(Color::Rgb(50, 40, 0)))
@@ -156,6 +169,16 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(footer, area);
 }
 
+
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let mut chars = s.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        format!("{truncated}…")
+    } else {
+        truncated
+    }
+}
 
 /// Format an ISO timestamp into a relative or short time string.
 fn format_timestamp(ts: &str) -> String {

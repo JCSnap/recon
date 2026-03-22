@@ -37,6 +37,7 @@ pub struct Session {
     pub tmux_session: Option<String>,
     pub tag: Option<String>,
     pub model: Option<String>,
+    pub last_user_msg: Option<String>,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub status: SessionStatus,
@@ -169,6 +170,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                             prev.and_then(|s| s.model.clone()),
                             prev.and_then(|s| s.effort.clone()),
                             prev.and_then(|s| s.last_activity.clone()),
+                            prev.and_then(|s| s.last_user_msg.clone()),
                         );
                         let cwd = info.cwd.unwrap_or_else(|| decode_project_path(&project_dir));
                         let (project_name, relative_dir, branch) = git_project_info(&cwd);
@@ -181,6 +183,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                         existing.total_input_tokens = info.input_tokens;
                         existing.total_output_tokens = info.output_tokens;
                         existing.last_activity = info.last_activity;
+                        existing.last_user_msg = info.last_user_msg;
                         existing.jsonl_path = path;
                         existing.last_file_size = info.file_size;
                     }
@@ -198,6 +201,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 prev.and_then(|s| s.model.clone()),
                 prev.and_then(|s| s.effort.clone()),
                 prev.and_then(|s| s.last_activity.clone()),
+                prev.and_then(|s| s.last_user_msg.clone()),
             );
 
             let cwd = info
@@ -223,6 +227,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
                 model: info.model,
+                last_user_msg: info.last_user_msg,
                 effort: info.effort,
                 total_input_tokens: info.input_tokens,
                 total_output_tokens: info.output_tokens,
@@ -294,6 +299,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 prev.and_then(|s| s.model.clone()),
                 prev.and_then(|s| s.effort.clone()),
                 prev.and_then(|s| s.last_activity.clone()),
+                prev.and_then(|s| s.last_user_msg.clone()),
             );
 
             let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
@@ -315,6 +321,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
                 model: info.model,
+                last_user_msg: info.last_user_msg,
                 effort: info.effort,
                 total_input_tokens: info.input_tokens,
                 total_output_tokens: info.output_tokens,
@@ -337,6 +344,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 tmux_session: Some(live.tmux_session.clone()),
                 tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
                 model: None,
+                last_user_msg: None,
                 effort: None,
                 total_input_tokens: 0,
                 total_output_tokens: 0,
@@ -358,7 +366,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         if let Some(newer) =
             find_clear_successor(&session.cwd, &matched_session_ids, &session.jsonl_path)
         {
-            let info = parse_jsonl(&newer, 0, 0, 0, None, None, None);
+            let info = parse_jsonl(&newer, 0, 0, 0, None, None, None, None);
             let new_sid = newer
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -441,6 +449,7 @@ struct ParsedInfo {
     effort: Option<String>,
     cwd: Option<String>,
     last_activity: Option<String>,
+    last_user_msg: Option<String>,
     file_size: u64,
 }
 
@@ -593,6 +602,8 @@ struct JsonlEntry {
     timestamp: Option<String>,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(rename = "isMeta", default)]
+    is_meta: bool,
 }
 
 #[derive(Deserialize)]
@@ -601,6 +612,8 @@ struct MessageEntry {
     model: Option<String>,
     #[serde(default)]
     usage: Option<UsageEntry>,
+    #[serde(default)]
+    content: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -624,6 +637,7 @@ fn parse_jsonl(
     prev_model: Option<String>,
     prev_effort: Option<String>,
     prev_activity: Option<String>,
+    prev_last_user_msg: Option<String>,
 ) -> ParsedInfo {
     let file = match fs::File::open(path) {
         Ok(f) => f,
@@ -635,6 +649,7 @@ fn parse_jsonl(
                 effort: prev_effort,
                 cwd: None,
                 last_activity: prev_activity,
+                last_user_msg: prev_last_user_msg,
                 file_size: 0,
             }
         }
@@ -650,6 +665,7 @@ fn parse_jsonl(
             effort: prev_effort,
             cwd: None,
             last_activity: prev_activity,
+            last_user_msg: prev_last_user_msg,
             file_size,
         };
     }
@@ -660,6 +676,7 @@ fn parse_jsonl(
     let mut model = prev_model;
     let mut effort = prev_effort;
     let mut last_activity = prev_activity;
+    let mut last_user_msg = prev_last_user_msg;
     let mut cwd = None;
 
     if prev_file_size > 0 {
@@ -670,6 +687,7 @@ fn parse_jsonl(
         model = None;
         effort = None;
         last_activity = None;
+        last_user_msg = None;
     }
 
     let mut line = String::new();
@@ -717,6 +735,15 @@ fn parse_jsonl(
                 }
                 if entry.cwd.is_some() {
                     cwd = entry.cwd;
+                }
+                if !entry.is_meta {
+                    if let Some(msg) = entry.message {
+                        if let Some(content) = msg.content {
+                            if let Some(text) = extract_user_text(&content) {
+                                last_user_msg = Some(text);
+                            }
+                        }
+                    }
                 }
             }
             // Extract model + effort from /model command stdout recorded in JSONL:
@@ -773,8 +800,55 @@ fn parse_jsonl(
         effort,
         cwd,
         last_activity,
+        last_user_msg,
         file_size,
     }
+}
+
+/// Extract plain text from a JSONL message content value (string or content-block array).
+/// Returns None if the content is empty or looks like a system/tool message.
+fn extract_user_text(content: &serde_json::Value) -> Option<String> {
+    let raw = match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(blocks) => {
+            let mut parts = Vec::new();
+            for block in blocks {
+                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                        parts.push(text.to_string());
+                    }
+                }
+            }
+            parts.join(" ")
+        }
+        _ => return None,
+    };
+
+    // Strip XML-like tags (system messages, tool results, etc.)
+    let clean = strip_xml_tags(&raw);
+    let clean = clean.trim();
+    if clean.is_empty() {
+        return None;
+    }
+    Some(clean.to_string())
+}
+
+/// Remove XML-like tags and their content from a string, keeping plain text only.
+fn strip_xml_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut depth = 0usize;
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            depth += 1;
+        } else if c == '>' {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 {
+            out.push(c);
+        }
+    }
+    // Collapse whitespace
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// For a resumed session, find the original JSONL by locating the session-id
@@ -1104,37 +1178,42 @@ struct SessionFileInfo {
 
 /// Read ~/.claude/sessions/{PID}.json files to build a PID → session info map.
 fn read_pid_session_map() -> HashMap<i32, SessionFileInfo> {
-    let sessions_dir = match dirs::home_dir() {
-        Some(h) => h.join(".claude").join("sessions"),
+    let home = match dirs::home_dir() {
+        Some(h) => h,
         None => return HashMap::new(),
     };
-
-    let entries = match fs::read_dir(&sessions_dir) {
-        Ok(e) => e,
-        Err(_) => return HashMap::new(),
-    };
+    let sessions_dirs = vec![
+        home.join(".claude").join("sessions"),
+        home.join(".claude-2").join("sessions"),
+    ];
 
     let mut map = HashMap::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().map(|e| e == "json").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
-                    if let (Some(pid), Some(sid)) = (
-                        v.get("pid").and_then(|p| p.as_i64()),
-                        v.get("sessionId").and_then(|s| s.as_str()),
-                    ) {
-                        let started_at = v
-                            .get("startedAt")
-                            .and_then(|s| s.as_u64())
-                            .unwrap_or(0);
-                        map.insert(
-                            pid as i32,
-                            SessionFileInfo {
-                                session_id: sid.to_string(),
-                                started_at,
-                            },
-                        );
+    for sessions_dir in &sessions_dirs {
+        let entries = match fs::read_dir(sessions_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map(|e| e == "json").unwrap_or(false) {
+                if let Ok(content) = fs::read_to_string(&path) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let (Some(pid), Some(sid)) = (
+                            v.get("pid").and_then(|p| p.as_i64()),
+                            v.get("sessionId").and_then(|s| s.as_str()),
+                        ) {
+                            let started_at = v
+                                .get("startedAt")
+                                .and_then(|s| s.as_u64())
+                                .unwrap_or(0);
+                            map.insert(
+                                pid as i32,
+                                SessionFileInfo {
+                                    session_id: sid.to_string(),
+                                    started_at,
+                                },
+                            );
+                        }
                     }
                 }
             }
@@ -1161,9 +1240,11 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut results = Vec::new();
-    let sessions_dir = dirs::home_dir()
-        .map(|h| h.join(".claude").join("sessions"))
-        .unwrap_or_default();
+    let home = dirs::home_dir().unwrap_or_default();
+    let sessions_dirs: Vec<std::path::PathBuf> = vec![
+        home.join(".claude").join("sessions"),
+        home.join(".claude-2").join("sessions"),
+    ];
 
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(4, "|||").collect();
@@ -1187,11 +1268,14 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             || command == "claude"
             || command == "node";
 
+        // Codex and gemini don't write ~/.claude/sessions files — use pane PID directly.
+        let is_other_agent = command == "codex" || command == "gemini";
+
         if is_claude {
             // pane_pid is the initial process — it may be claude itself (recon launch)
             // or a shell with claude as the foreground child (manual `claude` in a terminal).
             // Try the pane PID first, fall back to searching children.
-            let claude_pid = if sessions_dir.join(format!("{pid}.json")).exists() {
+            let claude_pid = if sessions_dirs.iter().any(|d| d.join(format!("{pid}.json")).exists()) {
                 Some(pid)
             } else {
                 find_claude_child_pid(pid)
@@ -1199,6 +1283,8 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             if let Some(cpid) = claude_pid {
                 results.push((cpid, session_name.to_string(), pane_path.to_string()));
             }
+        } else if is_other_agent {
+            results.push((pid, session_name.to_string(), pane_path.to_string()));
         } else if command == "bash" || command == "sh" || command == "zsh" {
             if let Some(claude_pid) = find_claude_child_pid(pid) {
                 results.push((claude_pid, session_name.to_string(), pane_path.to_string()));
@@ -1210,9 +1296,13 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
 }
 
 /// Check if a shell process has a claude child by looking for a child PID
-/// that has a corresponding ~/.claude/sessions/{PID}.json file.
+/// that has a corresponding session JSON file in any known claude config dir.
 fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
-    let sessions_dir = dirs::home_dir()?.join(".claude").join("sessions");
+    let home = dirs::home_dir()?;
+    let sessions_dirs = vec![
+        home.join(".claude").join("sessions"),
+        home.join(".claude-2").join("sessions"),
+    ];
     let output = std::process::Command::new("pgrep")
         .args(["-P", &parent_pid.to_string()])
         .output()
@@ -1220,6 +1310,6 @@ fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|l| l.trim().parse::<i32>().ok())
-        .find(|pid| sessions_dir.join(format!("{pid}.json")).exists())
+        .find(|pid| sessions_dirs.iter().any(|d| d.join(format!("{pid}.json")).exists()))
 }
 
