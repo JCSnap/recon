@@ -96,14 +96,20 @@ pub fn format_window(tokens: u64) -> String {
     }
 }
 
+/// All claude config project directories to scan (account 1 + account 2, etc.)
+fn claude_project_dirs() -> Vec<std::path::PathBuf> {
+    let Some(home) = dirs::home_dir() else { return vec![] };
+    let candidates = vec![
+        home.join(".claude").join("projects"),
+        home.join(".claude-2").join("projects"),
+    ];
+    candidates.into_iter().filter(|p| p.exists()).collect()
+}
+
 /// Discover sessions by scanning JSONL files, then matching to live tmux panes.
 pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Session> {
-    let claude_dir = match dirs::home_dir() {
-        Some(h) => h.join(".claude").join("projects"),
-        None => return vec![],
-    };
-
-    if !claude_dir.exists() {
+    let project_dirs = claude_project_dirs();
+    if project_dirs.is_empty() {
         return vec![];
     }
 
@@ -115,12 +121,13 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
     let mut matched_session_ids: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
+    for claude_dir in &project_dirs {
     // Scan all JSONL files across project directories.
     // No mtime cutoff needed — the live_map check (below) already filters out
     // dead sessions, and skipping the stat() call is faster than doing it.
-    let entries = match fs::read_dir(&claude_dir) {
+    let entries = match fs::read_dir(claude_dir) {
         Ok(e) => e,
-        Err(_) => return vec![],
+        Err(_) => continue,
     };
 
     for entry in entries.flatten() {
@@ -240,6 +247,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             });
         }
     }
+    } // for claude_dir in &project_dirs
 
     // Handle live sessions with no direct JSONL name match.
     // This covers two cases:
@@ -333,8 +341,12 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 last_file_size: info.file_size,
             });
         } else {
-            // No JSONL found — brand-new session, show as New placeholder
+            // No JSONL found — brand-new or non-claude session. Check pane for real status.
             let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
+            let status = match pane_status(&live.tmux_session) {
+                SessionStatus::Idle => SessionStatus::New, // truly new, nothing happening
+                other => other,
+            };
             sessions.push(Session {
                 session_id: session_id_key.clone(),
                 project_name,
@@ -348,7 +360,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 effort: None,
                 total_input_tokens: 0,
                 total_output_tokens: 0,
-                status: SessionStatus::New,
+                status,
                 pid: Some(live.pid),
                 last_activity: None,
                 started_at: live.started_at,
@@ -949,15 +961,15 @@ fn find_clear_successor(
     current_jsonl: &Path,
 ) -> Option<PathBuf> {
     let cur_mtime = current_jsonl.metadata().ok().and_then(|m| m.modified().ok())?;
-    let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
-    let project_dir = projects_dir.join(encode_project_path(cwd));
-
-    if !project_dir.is_dir() {
-        return None;
-    }
+    let encoded = encode_project_path(cwd);
 
     let mut best: Option<(PathBuf, SystemTime)> = None;
-    for entry in fs::read_dir(&project_dir).ok()?.flatten() {
+    for projects_dir in claude_project_dirs() {
+    let project_dir = projects_dir.join(&encoded);
+    if !project_dir.is_dir() {
+        continue;
+    }
+    for entry in fs::read_dir(&project_dir).ok().into_iter().flatten().flatten() {
         let path = entry.path();
         if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
             continue;
@@ -985,6 +997,7 @@ fn find_clear_successor(
             best = Some((path, modified));
         }
     }
+    } // for projects_dir
     best.map(|(p, _)| p)
 }
 
@@ -1013,8 +1026,8 @@ fn is_clear_born(path: &Path) -> bool {
 
 /// Find the JSONL file for a given session-id by scanning all project directories.
 fn find_jsonl_by_session_id(session_id: &str) -> Option<PathBuf> {
-    let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
     let mut best: Option<(PathBuf, u64)> = None;
+    for projects_dir in claude_project_dirs() {
     for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
         let candidate = entry.path().join(format!("{session_id}.jsonl"));
         if candidate.exists() {
@@ -1024,6 +1037,7 @@ fn find_jsonl_by_session_id(session_id: &str) -> Option<PathBuf> {
             }
         }
     }
+    } // for projects_dir
     best.map(|(p, _)| p)
 }
 
@@ -1061,18 +1075,22 @@ pub fn find_live_tmux_for_session(session_id: &str) -> Option<String> {
 }
 
 pub fn find_session_cwd(session_id: &str) -> Option<String> {
-    let projects_dir = dirs::home_dir()?.join(".claude").join("projects");
-    for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
-        let jsonl_path = entry.path().join(format!("{session_id}.jsonl"));
-        if !jsonl_path.exists() {
-            continue;
-        }
-        let file = fs::File::open(&jsonl_path).ok()?;
-        let reader = std::io::BufReader::new(file);
-        for line in reader.lines().take(20).flatten() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
-                    return Some(cwd.to_string());
+    for projects_dir in claude_project_dirs() {
+        for entry in fs::read_dir(&projects_dir).ok().into_iter().flatten().flatten() {
+            let jsonl_path = entry.path().join(format!("{session_id}.jsonl"));
+            if !jsonl_path.exists() {
+                continue;
+            }
+            let file = match fs::File::open(&jsonl_path) {
+                Ok(f) => f,
+                Err(_) => continue,
+            };
+            let reader = std::io::BufReader::new(file);
+            for line in reader.lines().take(20).flatten() {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(cwd) = v.get("cwd").and_then(|c| c.as_str()) {
+                        return Some(cwd.to_string());
+                    }
                 }
             }
         }
@@ -1128,8 +1146,10 @@ fn pane_status(session_name: &str) -> SessionStatus {
             continue;
         }
 
-        // Input: permission prompt on the very last non-empty line
-        if lines_checked == 0 && trimmed.contains("Esc to cancel") {
+        // Input: permission prompt or bypass mode indicator
+        if (lines_checked == 0 && trimmed.contains("Esc to cancel"))
+            || trimmed.contains("bypass permissions on")
+        {
             return SessionStatus::Input;
         }
 
