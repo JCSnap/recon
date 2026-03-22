@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::session::{self, Session};
+use crate::session::{self, Session, SessionStatus};
 use crate::tmux;
+use crate::usage;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ViewMode {
@@ -46,6 +47,24 @@ impl App {
             .filter(|s| s.tmux_session.is_some())
             .collect();
 
+        // Detect Working/Input → Idle transitions and fetch usage for that account.
+        let is_active = |s: &SessionStatus| {
+            matches!(s, SessionStatus::Working | SessionStatus::Input)
+        };
+        let mut accounts_to_fetch = std::collections::HashSet::new();
+        for new in &sessions {
+            if new.status == SessionStatus::Idle {
+                if let Some(prev) = self.prev_sessions.get(&new.session_id) {
+                    if is_active(&prev.status) {
+                        accounts_to_fetch.insert(new.agent.clone());
+                    }
+                }
+            }
+        }
+        for account in accounts_to_fetch {
+            usage::trigger_fetch(&account);
+        }
+
         self.prev_sessions = sessions
             .iter()
             .map(|s| (s.session_id.clone(), s.clone()))
@@ -55,6 +74,16 @@ impl App {
 
         if self.selected >= self.sessions.len() && !self.sessions.is_empty() {
             self.selected = self.sessions.len() - 1;
+        }
+    }
+
+    /// Trigger an initial usage fetch for all accounts that have live sessions.
+    /// Call once after the first refresh.
+    pub fn fetch_initial_usage(&self) {
+        let accounts: std::collections::HashSet<String> =
+            self.sessions.iter().map(|s| s.agent.clone()).collect();
+        for account in accounts {
+            usage::trigger_fetch(&account);
         }
     }
 
@@ -225,7 +254,15 @@ impl App {
         self.selected_zoomed_session().map(|s| s.cwd.clone())
     }
 
-    pub fn to_json(&self) -> String {
+    pub fn to_json(&self, accounts: &std::collections::HashSet<String>) -> String {
+        let usage_map: serde_json::Value = accounts.iter().map(|a| {
+            let v = usage::get(a).map(|info| serde_json::json!({
+                "five_hour_pct": info.five_hour_pct,
+                "resets_at": info.resets_at,
+            })).unwrap_or(serde_json::Value::Null);
+            (a.clone(), v)
+        }).collect::<serde_json::Map<_, _>>().into();
+
         let sessions: Vec<serde_json::Value> = self
             .sessions
             .iter()
@@ -256,6 +293,7 @@ impl App {
 
         serde_json::to_string_pretty(&serde_json::json!({
             "sessions": sessions,
+            "usage": usage_map,
         }))
         .unwrap_or_else(|_| "{}".to_string())
     }

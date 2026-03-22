@@ -1308,6 +1308,11 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
         let command = parts[2];
         let pane_path = parts[3];
 
+        // Skip recon's own internal usage-checker sessions.
+        if session_name.starts_with("_recon_usage_") {
+            continue;
+        }
+
         // Claude shows up as a version number (e.g. "2.1.76") or "claude" or "node"
         let is_claude = command
             .chars()

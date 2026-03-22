@@ -7,6 +7,7 @@ mod park;
 mod session;
 mod tmux;
 mod ui;
+mod usage;
 mod view_ui;
 
 use std::io;
@@ -97,7 +98,15 @@ fn main() -> io::Result<()> {
         Some(Command::Json) => {
             let mut app = App::new();
             app.refresh();
-            println!("{}", app.to_json());
+            // Synchronously fetch usage for all unique accounts present.
+            let accounts: std::collections::HashSet<String> =
+                app.sessions.iter().map(|s| s.agent.clone()).collect();
+            for account in &accounts {
+                if let Some(info) = usage::fetch_sync(account) {
+                    usage::store(account, info);
+                }
+            }
+            println!("{}", app.to_json(&accounts));
         }
         Some(Command::Park) => {
             park::park();
@@ -142,6 +151,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: Vi
     let mut app = App::new();
     app.view_mode = start_mode;
     app.refresh();
+    app.fetch_initial_usage();
 
     let refresh_interval = Duration::from_secs(2);
     let mut last_refresh = Instant::now();

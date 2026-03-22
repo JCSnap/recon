@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::App;
 use crate::session::SessionStatus;
 use crate::tmux;
+use crate::usage;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
@@ -213,10 +214,29 @@ fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rec
         } else {
             tokens.to_string()
         };
+
+        // Usage % from the fetched data.
+        let usage_str = match usage::get(label) {
+            Some(info) => {
+                let pct_part = info.five_hour_pct
+                    .map(|p| {
+                        let color_hint = if p >= 90 { "!" } else if p >= 75 { "~" } else { "" };
+                        format!("{color_hint}{p}%")
+                    })
+                    .unwrap_or_else(|| "?%".to_string());
+                let reset_part = info.resets_at
+                    .map(|r| format!(" resets {r}"))
+                    .unwrap_or_default();
+                format!(" · {pct_hint}{reset_part}", pct_hint = pct_part)
+            }
+            None if sessions > 0 => " · …".to_string(), // fetching
+            None => String::new(),
+        };
+
         let detail = if sessions > 0 {
-            format!(": {} · {}t  ", sessions, token_str)
+            format!(": {} · {}t{usage_str}  ", sessions, token_str)
         } else {
-            ": —  ".to_string()
+            format!(": —{usage_str}  ")
         };
         vec![
             Span::styled(display.to_string(), Style::default().fg(Color::Cyan)),
