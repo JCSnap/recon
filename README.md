@@ -1,8 +1,8 @@
 # recon
 
-A tmux-native dashboard for managing [Claude Code](https://claude.ai/claude-code) agents.
+A tmux-native dashboard for managing AI coding agent sessions (Claude Code, Codex, Gemini).
 
-Run multiple Claude Code sessions in tmux, then manage them all without ever leaving the terminal — see what each agent is working on, which ones need your attention, switch between them, kill or spawn new ones, and resume past sessions. All from a single keybinding.
+Run multiple agent sessions in tmux across different projects, then manage them all without ever leaving the terminal — see what each agent is working on, which ones need your attention, switch between them, kill or spawn new ones, and resume past sessions. All from a single keybinding.
 
 ![recon demo](assets/demo.gif)
 
@@ -34,11 +34,12 @@ Creatures are rendered as colored pixel art using half-block characters. Working
 │  2  debug-pipeline   infra::main            ~/repos/infra      ● Work  Sonnet 4.6  12k/200k < 1m        │
 │  3  write-tests      myapp::feat/auth       ~/repos/myapp      ● Work  Haiku 4.5   8k/200k  < 1m        │
 │  4  code-review      webapp::pr-452         ~/repos/webapp     ● Idle  Sonnet 4.6  90k/200k 5m ago      │
-│  5  scratch          recon::main            ~/repos/recon      ● Idle  Opus 4.6    3k/1M    10m ago     │
-│  6  new-session      dotfiles::main         ~/repos/dotfiles   ● New   —           —        —           │
+│     scratch          recon::main            ~/repos/recon      ● Idle  Opus 4.6    3k/1M    10m ago     │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 j/k navigate  Enter switch  v view  r refresh  q quit
 ```
+
+The `#` column shows your tag when set (`recon launch 1`), otherwise the row number. Use tags to map sessions to your terminal tabs — when a session shows **Input**, glance at the `#` to know which tab to switch to.
 
 - **Input** rows are highlighted — these sessions are blocked waiting for your approval
 - **Working** sessions are actively streaming or running tools
@@ -93,23 +94,56 @@ recon is built around **tmux**. Each Claude Code instance runs in its own tmux s
 cargo install --path .
 ```
 
-Requires tmux and [Claude Code](https://claude.ai/claude-code).
+Requires tmux and at least one supported agent: [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli).
 
 ## Usage
 
 ```bash
-recon                                        # Table dashboard
-recon view                                   # Tamagotchi visual dashboard
-recon json                                   # JSON output (for scripting)
-recon launch                                 # Create a new claude session in the current directory
-recon launch --name-only                     # Print session name without attaching
-recon new                                    # Interactive new session form
-recon resume                                 # Interactive resume picker
-recon resume --id <session-id>               # Resume a specific session
-recon resume --id <session-id> --name foo    # Resume with a custom tmux session name
-recon next                                   # Jump to the next agent waiting for input
-recon park                                   # Save all live sessions to disk
-recon unpark                                 # Restore previously parked sessions
+recon                                              # Table dashboard
+recon view                                         # Tamagotchi visual dashboard
+recon json                                         # JSON output (for scripting)
+
+# Launch a new session in the current directory
+recon launch                                       # claude, no tag
+recon launch 1                                     # claude, tagged "1"
+recon launch 2 --agent claude-2                    # second Claude account, tagged "2"
+recon launch 3 --agent codex                       # Codex, tagged "3"
+recon launch 4 --agent gemini                      # Gemini, tagged "4"
+recon launch --name-only                           # print tmux session name, don't attach
+
+# Interactive new session form (pick tag + agent, launches in current directory)
+recon new
+
+recon resume                                       # Interactive resume picker
+recon resume --id <session-id>                     # Resume a specific session
+recon resume --id <session-id> --name foo          # Resume with a custom tmux session name
+recon next                                         # Jump to the next agent waiting for input
+recon park                                         # Save all live sessions to disk
+recon unpark                                       # Restore previously parked sessions
+```
+
+### Multi-account Claude
+
+Add to your `~/.zshrc`:
+```bash
+cc2() { CLAUDE_CONFIG_DIR="$HOME/.claude-2" claude "$@"; }
+```
+
+Then use `recon launch --agent claude-2` to launch sessions under the second account.
+
+### Parallel workflow
+
+Open one terminal tab per task, run `recon launch <tab-number>` in each. Keep recon open in a dedicated tab or tmux popup. When a session shows **Input**, the `#` column tells you which tab needs attention.
+
+```bash
+# Tab 1
+cd ~/Projects/api && recon launch 1
+
+# Tab 2
+cd ~/Projects/frontend && recon launch 2 --agent claude-2
+
+# Tab 3 — keep recon open here as your dashboard
+recon
 ```
 
 ### Keybindings — Table View

@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-/// Monitor and manage Claude Code sessions running in tmux
+/// Monitor and manage AI coding agent sessions running in tmux
 #[derive(Parser)]
 #[command(name = "recon", version)]
 pub struct Cli {
@@ -12,23 +12,23 @@ pub struct Cli {
 pub enum Command {
     /// Open the visual (tamagotchi) dashboard
     View,
-    /// Interactive form to create a new tmux session
+    /// Interactive form to create a new session (pick tag + agent, launches in current directory)
     New,
-    /// Create a new claude session in the current directory
+    /// Create a new agent session in the current directory and attach to it
     Launch {
-        /// Short label shown in the recon dashboard (e.g. tab number)
+        /// Short label shown in the # column of the dashboard (e.g. your tab number)
         #[arg(value_name = "TAG")]
         tag: Option<String>,
         /// Agent to launch: claude, claude-2, codex, gemini (default: claude)
         #[arg(long, value_name = "AGENT")]
         agent: Option<String>,
-        /// Print only the session name (no attach)
+        /// Print only the tmux session name without attaching
         #[arg(long)]
         name_only: bool,
     },
     /// Jump directly to the next agent waiting for input
     Next,
-    /// Resume a past session (interactive picker, or by ID)
+    /// Resume a past Claude session (interactive picker, or by ID)
     Resume {
         /// Session ID to resume directly (skips the picker)
         #[arg(long)]
