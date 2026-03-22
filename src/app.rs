@@ -77,13 +77,14 @@ impl App {
         }
     }
 
-    /// Trigger an initial usage fetch for all accounts that have live sessions.
+    /// Trigger an initial usage fetch for all installed agents (not just those with sessions).
     /// Call once after the first refresh.
     pub fn fetch_initial_usage(&self) {
-        let accounts: std::collections::HashSet<String> =
-            self.sessions.iter().map(|s| s.agent.clone()).collect();
-        for account in accounts {
-            usage::trigger_fetch(&account);
+        // Always fetch for agents that are installed, regardless of active sessions.
+        for agent in crate::tmux::Agent::all() {
+            if crate::tmux::is_installed(agent.binary()) {
+                usage::trigger_fetch(agent.label());
+            }
         }
     }
 

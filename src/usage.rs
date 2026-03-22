@@ -26,8 +26,7 @@ pub fn store(account: &str, info: UsageInfo) {
     }
 }
 
-/// Trigger a background usage fetch for the given agent label ("claude" or "claude-2").
-/// No-ops if a fetch is already in progress (the session will already exist).
+/// Trigger a background usage fetch for the given agent label.
 pub fn trigger_fetch(account: &str) {
     let account = account.to_string();
     thread::spawn(move || {
@@ -44,12 +43,40 @@ pub fn fetch_sync(account: &str) -> Option<UsageInfo> {
 }
 
 fn fetch(account: &str) -> Option<UsageInfo> {
-    let session_name = format!("_recon_usage_{}", account.replace('-', "_"));
+    match account {
+        "codex" => fetch_codex(),
+        "gemini" => fetch_gemini(),
+        _ => fetch_claude(account), // "claude" or "claude-2"
+    }
+}
 
-    // Kill any stale checker session from a previous run.
+// ── tmux helpers ──────────────────────────────────────────────────────────────
+
+fn tmux_kill(session: &str) {
     let _ = Command::new("tmux")
-        .args(["kill-session", "-t", &session_name])
+        .args(["kill-session", "-t", session])
         .output();
+}
+
+fn tmux_send(session: &str, keys: &[&str]) {
+    let mut args = vec!["send-keys", "-t", session];
+    args.extend_from_slice(keys);
+    let _ = Command::new("tmux").args(&args).status();
+}
+
+fn tmux_capture(session: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["capture-pane", "-t", session, "-p", "-S", "-100"])
+        .output()
+        .ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+// ── Claude / Claude-2 ─────────────────────────────────────────────────────────
+
+fn fetch_claude(account: &str) -> Option<UsageInfo> {
+    let session_name = format!("_recon_usage_{}", account.replace('-', "_"));
+    tmux_kill(&session_name);
 
     let mut args: Vec<String> = vec![
         "new-session".into(),
@@ -59,7 +86,6 @@ fn fetch(account: &str) -> Option<UsageInfo> {
         "-c".into(),
         "/tmp".into(),
     ];
-
     if account == "claude-2" {
         if let Some(home) = dirs::home_dir() {
             args.push("-e".into());
@@ -69,8 +95,6 @@ fn fetch(account: &str) -> Option<UsageInfo> {
             ));
         }
     }
-
-    // Use the claude binary (resolved via PATH)
     args.push("claude".into());
     args.push("--dangerously-skip-permissions".into());
 
@@ -79,14 +103,11 @@ fn fetch(account: &str) -> Option<UsageInfo> {
         .status()
         .map(|s| s.success())
         .unwrap_or(false);
-
     if !ok {
         return None;
     }
 
-    // Wait for either the trust prompt or the ready main UI (whichever comes first).
-    // "bypass permissions on" = main UI ready
-    // "trust this folder"     = need to accept trust first
+    // Wait for main UI ready or trust prompt.
     let ready = wait_for_either(
         &session_name,
         "bypass permissions on",
@@ -94,54 +115,123 @@ fn fetch(account: &str) -> Option<UsageInfo> {
         20,
     );
     match ready {
-        Some(1) => {
-            // Main UI appeared directly (directory already trusted).
-        }
+        Some(1) => {}
         Some(2) => {
-            // Trust prompt — accept it, then wait for main UI.
-            let _ = Command::new("tmux")
-                .args(["send-keys", "-t", &session_name, "", "Enter"])
-                .status();
+            tmux_send(&session_name, &["", "Enter"]);
             if !wait_for_pane(&session_name, "bypass permissions on", 15) {
-                let _ = Command::new("tmux")
-                    .args(["kill-session", "-t", &session_name])
-                    .status();
+                tmux_kill(&session_name);
                 return None;
             }
         }
         _ => {
-            // Timed out.
-            let _ = Command::new("tmux")
-                .args(["kill-session", "-t", &session_name])
-                .status();
+            tmux_kill(&session_name);
             return None;
         }
     }
 
-    // Send /usage slash command.
-    let _ = Command::new("tmux")
-        .args(["send-keys", "-t", &session_name, "/usage", "Enter"])
-        .status();
-
-    // Wait for the dialog to render.
+    tmux_send(&session_name, &["/usage", "Enter"]);
     thread::sleep(Duration::from_millis(2000));
-
-    // Capture the pane.
-    let output = Command::new("tmux")
-        .args(["capture-pane", "-t", &session_name, "-p", "-S", "-50"])
-        .output()
-        .ok()?;
-
-    let content = String::from_utf8_lossy(&output.stdout).to_string();
-
-
-    // Clean up.
-    let _ = Command::new("tmux")
-        .args(["kill-session", "-t", &session_name])
-        .status();
-
-    parse_output(&content)
+    let content = tmux_capture(&session_name)?;
+    tmux_kill(&session_name);
+    parse_claude_output(&content)
 }
+
+// ── Codex ─────────────────────────────────────────────────────────────────────
+
+fn fetch_codex() -> Option<UsageInfo> {
+    let session_name = "_recon_usage_codex";
+    tmux_kill(session_name);
+
+    let ok = Command::new("tmux")
+        .args([
+            "new-session", "-d", "-s", session_name,
+            "-c", "/tmp",
+            "codex", "--full-auto",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        return None;
+    }
+
+    // Wait for status bar ("% left") or trust prompt ("do you trust").
+    let ready = wait_for_either(session_name, "% left", "do you trust", 20);
+    match ready {
+        Some(1) => {}
+        Some(2) => {
+            // Accept trust prompt (option 1 is default — just press Enter).
+            tmux_send(session_name, &["", "Enter"]);
+            if !wait_for_pane(session_name, "% left", 15) {
+                tmux_kill(session_name);
+                return None;
+            }
+        }
+        _ => {
+            tmux_kill(session_name);
+            return None;
+        }
+    }
+
+    let content = tmux_capture(session_name)?;
+    tmux_kill(session_name);
+    parse_codex_output(&content)
+}
+
+// ── Gemini ────────────────────────────────────────────────────────────────────
+
+fn fetch_gemini() -> Option<UsageInfo> {
+    let session_name = "_recon_usage_gemini";
+    tmux_kill(session_name);
+
+    let ok = Command::new("tmux")
+        .args([
+            "new-session", "-d", "-s", session_name,
+            "-c", "/tmp",
+            "gemini", "-y",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        return None;
+    }
+
+    // Wait for input prompt ("type your message") or trust prompt ("do you trust").
+    let ready = wait_for_either(session_name, "type your message", "do you trust", 20);
+    match ready {
+        Some(1) => {}
+        Some(2) => {
+            tmux_send(session_name, &["", "Enter"]);
+            if !wait_for_pane(session_name, "type your message", 15) {
+                tmux_kill(session_name);
+                return None;
+            }
+        }
+        _ => {
+            tmux_kill(session_name);
+            return None;
+        }
+    }
+
+    // Send /stats — gemini needs text and Enter as separate sends.
+    tmux_send(session_name, &["/stats"]);
+    thread::sleep(Duration::from_millis(200));
+    tmux_send(session_name, &["Enter"]);
+
+    // Wait for the stats table to appear.
+    if !wait_for_pane(session_name, "model usage", 10) {
+        tmux_kill(session_name);
+        return None;
+    }
+    thread::sleep(Duration::from_millis(500));
+
+    let content = tmux_capture(session_name)?;
+    tmux_kill(session_name);
+    parse_gemini_output(&content)
+}
+
+// ── Polling helpers ───────────────────────────────────────────────────────────
 
 /// Poll until one of two needles appears. Returns Some(1) for needle_a,
 /// Some(2) for needle_b, or None on timeout.
@@ -172,8 +262,7 @@ fn wait_for_either(
     None
 }
 
-/// Poll the pane until `needle` appears in its content (case-insensitive).
-/// Returns true if found within `timeout_secs`, false if timed out.
+/// Poll the pane until `needle` appears (case-insensitive).
 fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
     let needle_lower = needle.to_lowercase();
@@ -192,29 +281,28 @@ fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
     false
 }
 
-fn parse_output(content: &str) -> Option<UsageInfo> {
+// ── Parsers ───────────────────────────────────────────────────────────────────
+
+fn parse_claude_output(content: &str) -> Option<UsageInfo> {
     let mut five_hour_pct = None;
     let mut resets_at = None;
 
     for line in content.lines() {
         let clean = strip_ansi(line.trim());
 
-        // Look for "XX% used" anywhere on the line — take the FIRST match (current session).
+        // Take the FIRST "XX% used" line (current session, not extra usage).
         if five_hour_pct.is_none() && (clean.contains("% used") || clean.contains("%\u{a0}used")) {
             if let Some(pct) = extract_percent(&clean) {
                 five_hour_pct = Some(pct);
             }
         }
 
-        // Look for "Resets ..." line — take the FIRST match.
-        if resets_at.is_none() {
-            // Skip lines that also contain "$" (extra usage billing line like "Resets Apr 1")
-            if !clean.contains('$') {
-                if let Some(pos) = clean.find("Resets ") {
-                    let after = clean[pos + "Resets ".len()..].trim().to_string();
-                    if !after.is_empty() {
-                        resets_at = Some(after);
-                    }
+        // Take the FIRST "Resets ..." line that isn't a billing line.
+        if resets_at.is_none() && !clean.contains('$') {
+            if let Some(pos) = clean.find("Resets ") {
+                let after = clean[pos + "Resets ".len()..].trim().to_string();
+                if !after.is_empty() {
+                    resets_at = Some(after);
                 }
             }
         }
@@ -225,6 +313,81 @@ fn parse_output(content: &str) -> Option<UsageInfo> {
     } else {
         None
     }
+}
+
+fn parse_codex_output(content: &str) -> Option<UsageInfo> {
+    // The codex status bar shows "X% left" — we convert to "% used".
+    // e.g. "gpt-5.4 medium · 100% left · /private/tmp" → 100% left → 0% used
+    for line in content.lines() {
+        let clean = strip_ansi(line.trim());
+        if clean.contains("% left") {
+            if let Some(pct_left) = extract_percent(&clean) {
+                let pct_used = 100u32.saturating_sub(pct_left);
+                return Some(UsageInfo { five_hour_pct: Some(pct_used), resets_at: None });
+            }
+        }
+    }
+    None
+}
+
+fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
+    // Parse the /stats model table. Example line (after ANSI strip):
+    // "│  gemini-2.5-flash   -   ▬▬▬▬▬▬▬▬   0%  8:19 PM (24h)   │"
+    // Take the model with the highest usage %, carrying its reset time.
+    let mut max_pct: Option<u32> = None;
+    let mut resets_at: Option<String> = None;
+
+    for line in content.lines() {
+        let clean = strip_ansi(line.trim());
+        if !clean.contains("gemini-") {
+            continue;
+        }
+        if let Some(pct) = extract_percent(&clean) {
+            let update = match max_pct {
+                None => true,
+                Some(m) => pct > m,
+            };
+            if update {
+                max_pct = Some(pct);
+                // Extract reset time: text after "X%  " on this line.
+                resets_at = extract_text_after_percent(&clean);
+            }
+        }
+    }
+
+    if max_pct.is_some() || resets_at.is_some() {
+        Some(UsageInfo { five_hour_pct: max_pct, resets_at })
+    } else {
+        None
+    }
+}
+
+/// Return the trimmed text that follows the last "X%" in `s`, stopping at box borders.
+fn extract_text_after_percent(s: &str) -> Option<String> {
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    let mut after_pos: Option<usize> = None;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < bytes.len() && bytes[i] == b'%' {
+                after_pos = Some(i + 1);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    after_pos.map(|pos| {
+        s[pos..]
+            .split('│') // stop at box border
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    })
 }
 
 fn extract_percent(s: &str) -> Option<u32> {

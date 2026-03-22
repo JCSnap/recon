@@ -98,9 +98,12 @@ fn main() -> io::Result<()> {
         Some(Command::Json) => {
             let mut app = App::new();
             app.refresh();
-            // Synchronously fetch usage for all unique accounts present.
-            let accounts: std::collections::HashSet<String> =
-                app.sessions.iter().map(|s| s.agent.clone()).collect();
+            // Synchronously fetch usage for all installed agents.
+            let accounts: std::collections::HashSet<String> = tmux::Agent::all()
+                .iter()
+                .filter(|a| tmux::is_installed(a.binary()))
+                .map(|a| a.label().to_string())
+                .collect();
             for account in &accounts {
                 if let Some(info) = usage::fetch_sync(account) {
                     usage::store(account, info);

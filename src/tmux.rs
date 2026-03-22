@@ -44,6 +44,14 @@ impl Agent {
         }
     }
 
+    pub fn binary(&self) -> &'static str {
+        match self {
+            Agent::Claude1 | Agent::Claude2 => "claude",
+            Agent::Codex => "codex",
+            Agent::Gemini => "gemini",
+        }
+    }
+
     /// Returns (binary_path, flags, optional_env_var as "KEY=VALUE").
     fn command_info(&self) -> (String, &'static [&'static str], Option<String>) {
         match self {
