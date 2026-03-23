@@ -17,7 +17,7 @@ const SPRITE_W: usize = 10; // pixel columns
 const SPRITE_H: usize = 10; // pixel rows
 const SPRITE_RENDER_H: u16 = (SPRITE_H as u16 + 1) / 2; // terminal lines for sprite (5)
 const CHAR_WIDTH: u16 = (SPRITE_W as u16) + 4; // sprite + padding
-const CHAR_LABEL_LINES: u16 = 4; // name + branch + status + context bar
+const CHAR_LABEL_LINES: u16 = 5; // name + branch + status + context bar + last msg
 const CHAR_HEIGHT: u16 = SPRITE_RENDER_H + CHAR_LABEL_LINES;
 
 // ── Pixel sprite data ────────────────────────────────────────────────
@@ -574,6 +574,16 @@ fn render_character(frame: &mut Frame, session: &Session, area: Rect, tick: u64,
     lines.push(Line::from(Span::styled(
         truncate_str(&bar_str, area.width as usize),
         Style::default().fg(bar_color),
+    )));
+
+    // Last user message
+    let msg = session
+        .last_user_msg
+        .as_deref()
+        .unwrap_or("");
+    lines.push(Line::from(Span::styled(
+        truncate_str(msg, area.width as usize),
+        Style::default().fg(Color::DarkGray),
     )));
 
     let paragraph = Paragraph::new(lines).alignment(Alignment::Center);
