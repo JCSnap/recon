@@ -1183,7 +1183,14 @@ fn pane_status(session_name: &str) -> SessionStatus {
         }
 
         // Working: background agents are running (status bar shows "N local agent")
-        if lines_checked == 0 && trimmed.contains("local agent") {
+        // This may not be on the very last line — INSERT mode bar can appear below it.
+        if trimmed.contains("local agent") {
+            return SessionStatus::Working;
+        }
+
+        // Working: a subagent is running — the pane shows "Running…" for an
+        // active tool call inside an Agent block.
+        if trimmed == "Running\u{2026}" {
             return SessionStatus::Working;
         }
 
@@ -1204,7 +1211,7 @@ fn pane_status(session_name: &str) -> SessionStatus {
         }
 
         lines_checked += 1;
-        if lines_checked >= 10 {
+        if lines_checked >= 40 {
             break;
         }
     }
