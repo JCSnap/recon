@@ -145,7 +145,15 @@ fn fetch_claude(account: &str) -> Option<UsageInfo> {
     }
 
     tmux_send(&session_name, &["/usage", "Enter"]);
-    thread::sleep(Duration::from_millis(2000));
+
+    // Poll for the usage output to appear instead of a fixed sleep.
+    if !wait_for_pane(&session_name, "% used", 10) {
+        tmux_kill(&session_name);
+        return None;
+    }
+    // Small settle delay so the full output (including "Resets") renders.
+    thread::sleep(Duration::from_millis(500));
+
     let content = tmux_capture(&session_name)?;
     tmux_kill(&session_name);
     parse_claude_output(&content)
