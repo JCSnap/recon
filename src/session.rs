@@ -1184,8 +1184,11 @@ fn pane_status(session_name: &str) -> SessionStatus {
 
         // Working: background agents are running (status bar shows "N local agent")
         // This may not be on the very last line — INSERT mode bar can appear below it.
-        if trimmed.contains("local agent") {
-            return SessionStatus::Working;
+        // Require a digit before "local agent" to avoid matching conversational text.
+        if let Some(pos) = trimmed.find("local agent") {
+            if pos > 0 && trimmed[..pos].ends_with(|c: char| c.is_ascii_digit()) {
+                return SessionStatus::Working;
+            }
         }
 
         // Working: a subagent is running — the pane shows "Running…" for an
