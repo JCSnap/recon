@@ -35,12 +35,19 @@ pub fn cleanup() {
 }
 
 /// Trigger a background usage fetch for the given agent label.
+/// Retries up to 2 times (3 attempts total) with a 5-second delay between attempts.
 pub fn trigger_fetch(account: &str) {
     let account = account.to_string();
     thread::spawn(move || {
-        if let Some(info) = fetch(&account) {
-            if let Ok(mut c) = cache().lock() {
-                c.insert(account, info);
+        for attempt in 0..3 {
+            if let Some(info) = fetch(&account) {
+                if let Ok(mut c) = cache().lock() {
+                    c.insert(account, info);
+                }
+                return;
+            }
+            if attempt < 2 {
+                thread::sleep(Duration::from_secs(5));
             }
         }
     });
