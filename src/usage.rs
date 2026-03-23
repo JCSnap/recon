@@ -196,6 +196,18 @@ fn fetch_codex() -> Option<UsageInfo> {
         }
     }
 
+    // Send /status to get account-level usage (the status bar only shows session usage).
+    tmux_send(session_name, &["/status", "Enter"]);
+
+    // Poll for the 5h limit line to appear in the /status output.
+    if !wait_for_pane(session_name, "5h limit", 10) {
+        // Fall back to status bar if /status didn't produce output.
+        let content = tmux_capture(session_name)?;
+        tmux_kill(session_name);
+        return parse_codex_output(&content);
+    }
+    thread::sleep(Duration::from_millis(500));
+
     let content = tmux_capture(session_name)?;
     tmux_kill(session_name);
     parse_codex_output(&content)
@@ -339,18 +351,41 @@ fn parse_claude_output(content: &str) -> Option<UsageInfo> {
 }
 
 fn parse_codex_output(content: &str) -> Option<UsageInfo> {
-    // The codex status bar shows "X% left" — we convert to "% used".
-    // e.g. "gpt-5.4 medium · 100% left · /private/tmp" → 100% left → 0% used
+    // Prefer the "5h limit" line from /status output, which shows account-level usage.
+    // e.g. "5h limit:  [...] 86% left (resets 11:31)"
+    // Fall back to the status bar "X% left" if /status output isn't present.
+    let mut five_hour_pct = None;
+    let mut resets_at = None;
+    let mut fallback_pct = None;
+
     for line in content.lines() {
         let clean = strip_ansi(line.trim());
-        if clean.contains("% left") {
+        if clean.contains("5h limit") && clean.contains("% left") {
             if let Some(pct_left) = extract_percent(&clean) {
-                let pct_used = 100u32.saturating_sub(pct_left);
-                return Some(UsageInfo { five_hour_pct: Some(pct_used), resets_at: None });
+                five_hour_pct = Some(100u32.saturating_sub(pct_left));
+            }
+            // Extract reset time from "resets HH:MM" or similar.
+            if let Some(pos) = clean.find("resets ") {
+                let after = &clean[pos + "resets ".len()..];
+                // Trim trailing paren/bracket/box chars.
+                let trimmed = after.trim_end_matches(|c: char| c == ')' || c == '│' || c == ' ');
+                if !trimmed.is_empty() {
+                    resets_at = Some(trimmed.to_string());
+                }
+            }
+        } else if fallback_pct.is_none() && clean.contains("% left") {
+            if let Some(pct_left) = extract_percent(&clean) {
+                fallback_pct = Some(100u32.saturating_sub(pct_left));
             }
         }
     }
-    None
+
+    let pct = five_hour_pct.or(fallback_pct);
+    if pct.is_some() || resets_at.is_some() {
+        Some(UsageInfo { five_hour_pct: pct, resets_at })
+    } else {
+        None
+    }
 }
 
 fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
