@@ -540,11 +540,12 @@ fn render_character(frame: &mut Frame, session: &Session, area: Rect, tick: u64,
     let sprite_lines = render_sprite_lines(sprite, palette);
     lines.extend(sprite_lines);
 
-    // Session name — prefix with tag if set (e.g. "[1] myapp")
+    // Session name — prefix with agent tag (e.g. "cc1 myapp" or "cc1 [1] myapp")
     let name = session.tmux_session.as_deref().unwrap_or("???");
+    let agent_tag = agent_short_name(&session.agent);
     let name_display = match &session.tag {
-        Some(t) => format!("[{t}] {name}"),
-        None => name.to_string(),
+        Some(t) => format!("{agent_tag} [{t}] {name}"),
+        None => format!("{agent_tag} {name}"),
     };
     let name_style = if is_selected {
         Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
@@ -644,6 +645,16 @@ fn render_footer(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+fn agent_short_name(agent: &str) -> &'static str {
+    match agent {
+        "claude" => "cc1",
+        "claude-2" => "cc2",
+        "codex" => "cdx",
+        "gemini" => "gem",
+        _ => "?",
+    }
+}
 
 fn truncate_str(s: &str, max_width: usize) -> String {
     let char_count: usize = s.chars().count();

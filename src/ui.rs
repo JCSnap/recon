@@ -28,6 +28,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     let header = Row::new(vec![
         Cell::from(" # "),
         Cell::from("Session"),
+        Cell::from("Agent"),
         Cell::from("Project"),
         Cell::from("Status"),
         Cell::from("Model"),
@@ -108,9 +109,13 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 ),
             ]));
 
+            let agent_short = agent_display_name(&session.agent);
+            let agent_color = agent_color(&session.agent);
+
             let row = Row::new(vec![
                 Cell::from(num),
                 Cell::from(tmux_name.to_string()),
+                Cell::from(Span::styled(agent_short, Style::default().fg(agent_color))),
                 project_cell,
                 status_cell,
                 Cell::from(session.model_display()),
@@ -132,6 +137,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     let widths = [
         Constraint::Length(4),   // #
         Constraint::Length(16),  // Session
+        Constraint::Length(6),   // Agent
         Constraint::Min(20),     // Project (repo::subdir::branch)
         Constraint::Length(10),  // Status
         Constraint::Length(20),  // Model
@@ -255,6 +261,25 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(footer, area);
 }
 
+
+fn agent_display_name(agent: &str) -> &'static str {
+    match agent {
+        "claude" => "cc1",
+        "claude-2" => "cc2",
+        "codex" => "codex",
+        "gemini" => "gem",
+        _ => "?",
+    }
+}
+
+fn agent_color(agent: &str) -> Color {
+    match agent {
+        "claude" | "claude-2" => Color::Rgb(217, 119, 62),  // orange
+        "codex" => Color::Rgb(110, 200, 120),                // green
+        "gemini" => Color::Rgb(100, 150, 255),               // blue
+        _ => Color::DarkGray,
+    }
+}
 
 fn truncate_str(s: &str, max_chars: usize) -> String {
     let mut chars = s.chars();
