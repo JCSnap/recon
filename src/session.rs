@@ -1182,6 +1182,11 @@ fn pane_status(session_name: &str) -> SessionStatus {
             return SessionStatus::Input;
         }
 
+        // Working: background agents are running (status bar shows "N local agent")
+        if lines_checked == 0 && trimmed.contains("local agent") {
+            return SessionStatus::Working;
+        }
+
         // Working: line starts with a spinner character and contains "…"
         // Spinners: ✽(U+273D) ✢(U+2722) ✳(U+2733) ✶(U+2736) ⏺(U+23FA)
         if let Some(first) = trimmed.chars().next() {

@@ -682,6 +682,7 @@ mod tests {
             relative_dir: None,
             tmux_session: None,
             tag: None,
+            agent: String::new(),
             model: None,
             last_user_msg: None,
             effort: None,
