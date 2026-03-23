@@ -168,6 +168,7 @@ fn fetch_codex() -> Option<UsageInfo> {
     let ok = Command::new("tmux")
         .args([
             "new-session", "-d", "-s", session_name,
+            "-x", "120", "-y", "40",
             "-c", "/tmp",
             "codex", "--full-auto",
         ])
@@ -197,7 +198,12 @@ fn fetch_codex() -> Option<UsageInfo> {
     }
 
     // Send /status to get account-level usage (the status bar only shows session usage).
-    tmux_send(session_name, &["/status", "Enter"]);
+    // Type the command, dismiss autocomplete with Escape, then press Enter.
+    tmux_send(session_name, &["/status"]);
+    thread::sleep(Duration::from_millis(500));
+    tmux_send(session_name, &["Escape"]);
+    thread::sleep(Duration::from_millis(300));
+    tmux_send(session_name, &["Enter"]);
 
     // Poll for the 5h limit line to appear in the /status output.
     if !wait_for_pane(session_name, "5h limit", 10) {
@@ -488,4 +494,45 @@ fn strip_ansi(s: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_codex_status_output() {
+        let content = r#"
+│  5h limit:             [████████░░░░░░░░░░░░] 42% left (resets 11:31)           │
+│  Weekly limit:         [████████████████░░░░] 82% left (resets 16:27 on 29 Mar) │
+
+  gpt-5.4 medium · 100% left · /private/tmp
+"#;
+        let info = parse_codex_output(content).expect("should parse");
+        // 42% left → 58% used
+        assert_eq!(info.five_hour_pct, Some(58));
+        assert!(info.resets_at.is_some(), "should have resets_at");
+        assert!(info.resets_at.as_ref().unwrap().contains("11:31"),
+            "resets_at should contain 11:31, got: {:?}", info.resets_at);
+    }
+
+    #[test]
+    fn test_parse_codex_status_bar_fallback() {
+        // When /status output isn't present, fall back to status bar.
+        let content = "  gpt-5.4 medium · 100% left · /private/tmp\n";
+        let info = parse_codex_output(content).expect("should parse");
+        // 100% left → 0% used
+        assert_eq!(info.five_hour_pct, Some(0));
+    }
+
+    #[test]
+    fn test_parse_codex_prefers_5h_over_status_bar() {
+        let content = r#"
+│  5h limit:             [████████░░░░░░░░░░░░] 86% left (resets 11:31)           │
+  gpt-5.4 medium · 100% left · /private/tmp
+"#;
+        let info = parse_codex_output(content).expect("should parse");
+        // Should use 5h limit (86% left → 14% used), not status bar (100% left → 0%)
+        assert_eq!(info.five_hour_pct, Some(14));
+    }
 }
