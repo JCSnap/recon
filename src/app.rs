@@ -280,6 +280,10 @@ impl App {
             let v = usage::get(a).map(|info| serde_json::json!({
                 "five_hour_pct": info.five_hour_pct,
                 "resets_at": info.resets_at,
+                "weekly_pct": info.weekly_pct,
+                "weekly_resets_at": info.weekly_resets_at,
+                "effective_pct": info.effective_pct(),
+                "effective_resets_at": info.effective_resets_at(),
             })).unwrap_or(serde_json::Value::Null);
             (a.clone(), v)
         }).collect::<serde_json::Map<_, _>>().into();

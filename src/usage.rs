@@ -8,6 +8,26 @@ use std::time::Duration;
 pub struct UsageInfo {
     pub five_hour_pct: Option<u32>,
     pub resets_at: Option<String>,
+    pub weekly_pct: Option<u32>,
+    pub weekly_resets_at: Option<String>,
+}
+
+impl UsageInfo {
+    /// Return the effective usage percentage — the worse of 5h and weekly limits.
+    pub fn effective_pct(&self) -> Option<u32> {
+        match (self.five_hour_pct, self.weekly_pct) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (a, b) => a.or(b),
+        }
+    }
+
+    /// Return the reset time for whichever limit is the bottleneck.
+    pub fn effective_resets_at(&self) -> Option<&str> {
+        match (self.five_hour_pct, self.weekly_pct) {
+            (Some(a), Some(b)) if b > a => self.weekly_resets_at.as_deref(),
+            _ => self.resets_at.as_deref().or(self.weekly_resets_at.as_deref()),
+        }
+    }
 }
 
 static CACHE: OnceLock<Mutex<HashMap<String, UsageInfo>>> = OnceLock::new();
@@ -205,8 +225,8 @@ fn fetch_codex() -> Option<UsageInfo> {
     thread::sleep(Duration::from_millis(300));
     tmux_send(session_name, &["Enter"]);
 
-    // Poll for the 5h limit line to appear in the /status output.
-    if !wait_for_pane(session_name, "5h limit", 10) {
+    // Poll for the 5h or weekly limit line to appear in the /status output.
+    if wait_for_either(session_name, "5h limit", "weekly limit", 10).is_none() {
         // Fall back to status bar if /status didn't produce output.
         let content = tmux_capture(session_name)?;
         tmux_kill(session_name);
@@ -350,34 +370,40 @@ fn parse_claude_output(content: &str) -> Option<UsageInfo> {
     }
 
     if five_hour_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo { five_hour_pct, resets_at })
+        Some(UsageInfo { five_hour_pct, resets_at, weekly_pct: None, weekly_resets_at: None })
     } else {
         None
     }
 }
 
 fn parse_codex_output(content: &str) -> Option<UsageInfo> {
-    // Prefer the "5h limit" line from /status output, which shows account-level usage.
+    // Parse the "5h limit" and "Weekly limit" lines from /status output.
     // e.g. "5h limit:  [...] 86% left (resets 11:31)"
+    //      "Weekly limit:  [...] 82% left (resets 16:27 on 29 Mar)"
     // Fall back to the status bar "X% left" if /status output isn't present.
     let mut five_hour_pct = None;
     let mut resets_at = None;
+    let mut weekly_pct = None;
+    let mut weekly_resets_at = None;
     let mut fallback_pct = None;
 
     for line in content.lines() {
         let clean = strip_ansi(line.trim());
-        if clean.contains("5h limit") && clean.contains("% left") {
+        let lower = clean.to_lowercase();
+
+        if lower.contains("5h limit") && clean.contains("% left") {
             if let Some(pct_left) = extract_percent(&clean) {
                 five_hour_pct = Some(100u32.saturating_sub(pct_left));
             }
-            // Extract reset time from "resets HH:MM" or similar.
-            if let Some(pos) = clean.find("resets ") {
-                let after = &clean[pos + "resets ".len()..];
-                // Trim trailing paren/bracket/box chars.
-                let trimmed = after.trim_end_matches(|c: char| c == ')' || c == '│' || c == ' ');
-                if !trimmed.is_empty() {
-                    resets_at = Some(trimmed.to_string());
-                }
+            if let Some(reset) = extract_resets(&clean) {
+                resets_at = Some(reset);
+            }
+        } else if lower.contains("weekly limit") && clean.contains("% left") {
+            if let Some(pct_left) = extract_percent(&clean) {
+                weekly_pct = Some(100u32.saturating_sub(pct_left));
+            }
+            if let Some(reset) = extract_resets(&clean) {
+                weekly_resets_at = Some(reset);
             }
         } else if fallback_pct.is_none() && clean.contains("% left") {
             if let Some(pct_left) = extract_percent(&clean) {
@@ -387,11 +413,29 @@ fn parse_codex_output(content: &str) -> Option<UsageInfo> {
     }
 
     let pct = five_hour_pct.or(fallback_pct);
-    if pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo { five_hour_pct: pct, resets_at })
+    if pct.is_some() || resets_at.is_some() || weekly_pct.is_some() {
+        Some(UsageInfo {
+            five_hour_pct: pct,
+            resets_at,
+            weekly_pct,
+            weekly_resets_at,
+        })
     } else {
         None
     }
+}
+
+/// Extract reset time from a line containing "resets HH:MM" or similar.
+fn extract_resets(clean: &str) -> Option<String> {
+    if let Some(pos) = clean.find("resets ") {
+        let after = &clean[pos + "resets ".len()..];
+        // Trim trailing paren/bracket/box chars.
+        let trimmed = after.trim_end_matches(|c: char| c == ')' || c == '│' || c == ' ');
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+    None
 }
 
 fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
@@ -420,7 +464,7 @@ fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
     }
 
     if max_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo { five_hour_pct: max_pct, resets_at })
+        Some(UsageInfo { five_hour_pct: max_pct, resets_at, weekly_pct: None, weekly_resets_at: None })
     } else {
         None
     }
@@ -514,6 +558,12 @@ mod tests {
         assert!(info.resets_at.is_some(), "should have resets_at");
         assert!(info.resets_at.as_ref().unwrap().contains("11:31"),
             "resets_at should contain 11:31, got: {:?}", info.resets_at);
+        // 82% left → 18% used
+        assert_eq!(info.weekly_pct, Some(18));
+        assert!(info.weekly_resets_at.as_ref().unwrap().contains("16:27"),
+            "weekly_resets_at should contain 16:27, got: {:?}", info.weekly_resets_at);
+        // effective should be max(58, 18) = 58
+        assert_eq!(info.effective_pct(), Some(58));
     }
 
     #[test]
@@ -534,5 +584,26 @@ mod tests {
         let info = parse_codex_output(content).expect("should parse");
         // Should use 5h limit (86% left → 14% used), not status bar (100% left → 0%)
         assert_eq!(info.five_hour_pct, Some(14));
+    }
+
+    #[test]
+    fn test_parse_codex_weekly_exhausted() {
+        // When weekly limit is exhausted but 5h limit has capacity,
+        // effective_pct should reflect the weekly exhaustion.
+        let content = r#"
+│  5h limit:             [████████████████████] 100% left (resets 16:51)           │
+│  Weekly limit:         [░░░░░░░░░░░░░░░░░░░░] 0% left (resets 16:27 on 29 Mar)  │
+
+  gpt-5.4 medium · 100% left · /private/tmp
+"#;
+        let info = parse_codex_output(content).expect("should parse");
+        // 5h: 100% left → 0% used
+        assert_eq!(info.five_hour_pct, Some(0));
+        // Weekly: 0% left → 100% used
+        assert_eq!(info.weekly_pct, Some(100));
+        // Effective: max(0, 100) = 100
+        assert_eq!(info.effective_pct(), Some(100));
+        // Bottleneck is weekly, so effective reset should be weekly's
+        assert!(info.effective_resets_at().unwrap().contains("16:27"));
     }
 }

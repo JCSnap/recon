@@ -209,13 +209,13 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
 
         let detail = match usage::get(label) {
             Some(info) => {
-                let pct_part = info.five_hour_pct
+                let pct_part = info.effective_pct()
                     .map(|p| {
                         let hint = if p >= 90 { "!" } else if p >= 75 { "~" } else { "" };
                         format!("{hint}{p}%")
                     })
                     .unwrap_or_else(|| "?%".to_string());
-                let reset_part = info.resets_at
+                let reset_part = info.effective_resets_at()
                     .map(|r| format!(" resets {r}"))
                     .unwrap_or_default();
                 format!(": {pct_part}{reset_part}  ")
