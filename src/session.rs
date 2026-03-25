@@ -1191,6 +1191,11 @@ fn pane_status(session_name: &str) -> SessionStatus {
             }
         }
 
+        // Working: background shell commands are running ("N shells still running")
+        if trimmed.contains("shells still running") || trimmed.contains("shell still running") {
+            return SessionStatus::Working;
+        }
+
         // Working: a subagent is running — the pane shows "Running…" for an
         // active tool call inside an Agent block.
         if trimmed == "Running\u{2026}" {
