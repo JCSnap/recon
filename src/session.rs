@@ -1210,17 +1210,26 @@ fn pane_status(session_name: &str) -> SessionStatus {
     };
 
     let content = String::from_utf8_lossy(&output.stdout);
+    classify_pane_content(&content)
+}
 
+fn classify_pane_content(content: &str) -> SessionStatus {
     let mut lines_checked = 0;
     for line in content.lines().rev() {
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
+        let lower = trimmed.to_ascii_lowercase();
 
         // Input: permission prompt on the last non-empty line
-        if lines_checked == 0 && trimmed.contains("Esc to cancel") {
+        if lines_checked == 0 && (lower.contains("esc to cancel") || lower.contains("press enter to confirm")) {
             return SessionStatus::Input;
+        }
+
+        // Working: Codex status bar while actively responding/tool-running.
+        if lower.contains("working (") && lower.contains("esc to interrupt") {
+            return SessionStatus::Working;
         }
 
         // Working: background agents are running (status bar shows "N local agent")
@@ -1233,7 +1242,7 @@ fn pane_status(session_name: &str) -> SessionStatus {
         }
 
         // Working: background shell commands are running ("N shells still running")
-        if trimmed.contains("shells still running") || trimmed.contains("shell still running") {
+        if lower.contains("shells still running") || lower.contains("shell still running") {
             return SessionStatus::Working;
         }
 
@@ -1487,7 +1496,7 @@ fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::classify_pane_process;
+    use super::{classify_pane_content, classify_pane_process, SessionStatus};
 
     #[test]
     fn classifies_node_wrapped_codex_as_codex() {
@@ -1511,5 +1520,17 @@ mod tests {
             classify_pane_process("node", Some("node /Users/jcjustin/app/server.js")),
             None
         );
+    }
+
+    #[test]
+    fn classifies_codex_working_status_bar_as_working() {
+        let content = "\n• Working (11s • esc to interrupt)\n\n› Explain this codebase\n";
+        assert_eq!(classify_pane_content(content), SessionStatus::Working);
+    }
+
+    #[test]
+    fn classifies_lowercase_cancel_prompt_as_input() {
+        let content = "\n• Approval needed\nPress Enter to confirm or Esc to cancel\n";
+        assert_eq!(classify_pane_content(content), SessionStatus::Input);
     }
 }
