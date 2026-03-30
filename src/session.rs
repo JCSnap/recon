@@ -99,7 +99,9 @@ pub fn format_window(tokens: u64) -> String {
 
 /// All claude config project directories to scan (account 1 + account 2, etc.)
 fn claude_project_dirs() -> Vec<std::path::PathBuf> {
-    let Some(home) = dirs::home_dir() else { return vec![] };
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
+    };
     let candidates = vec![
         home.join(".claude").join("projects"),
         home.join(".claude-2").join("projects"),
@@ -123,132 +125,140 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         std::collections::HashSet::new();
 
     for claude_dir in &project_dirs {
-    // Scan all JSONL files across project directories.
-    // No mtime cutoff needed — the live_map check (below) already filters out
-    // dead sessions, and skipping the stat() call is faster than doing it.
-    let entries = match fs::read_dir(claude_dir) {
-        Ok(e) => e,
-        Err(_) => continue,
-    };
-
-    for entry in entries.flatten() {
-        let project_dir = entry.path();
-        if !project_dir.is_dir() {
-            continue;
-        }
-
-        let jsonl_files = match fs::read_dir(&project_dir) {
+        // Scan all JSONL files across project directories.
+        // No mtime cutoff needed — the live_map check (below) already filters out
+        // dead sessions, and skipping the stat() call is faster than doing it.
+        let entries = match fs::read_dir(claude_dir) {
             Ok(e) => e,
             Err(_) => continue,
         };
 
-        for jentry in jsonl_files.flatten() {
-            let path = jentry.path();
-            if path.is_dir() {
-                continue;
-            }
-            if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+        for entry in entries.flatten() {
+            let project_dir = entry.path();
+            if !project_dir.is_dir() {
                 continue;
             }
 
-            let session_id = path
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-
-            // Look up in live map — skip if no live process
-            let live = match live_map.get(&session_id) {
-                Some(l) => l,
-                None => continue,
+            let jsonl_files = match fs::read_dir(&project_dir) {
+                Ok(e) => e,
+                Err(_) => continue,
             };
 
-            // Same session_id can appear in multiple project dirs (e.g. session
-            // started in one CWD then moved to a worktree). Prefer the larger file.
-            if matched_session_ids.contains(&session_id) {
-                if let Some(existing) = sessions.iter_mut().find(|s| s.session_id == session_id) {
-                    let existing_size = existing.jsonl_path.metadata().ok().map(|m| m.len()).unwrap_or(0);
-                    let new_size = path.metadata().ok().map(|m| m.len()).unwrap_or(0);
-                    if new_size > existing_size {
-                        let prev = prev_sessions.get(&session_id);
-                        let info = parse_jsonl(
-                            &path,
-                            prev.map(|s| s.last_file_size).unwrap_or(0),
-                            prev.map(|s| s.total_input_tokens).unwrap_or(0),
-                            prev.map(|s| s.total_output_tokens).unwrap_or(0),
-                            prev.and_then(|s| s.model.clone()),
-                            prev.and_then(|s| s.effort.clone()),
-                            prev.and_then(|s| s.last_activity.clone()),
-                            prev.and_then(|s| s.last_user_msg.clone()),
-                        );
-                        let cwd = info.cwd.unwrap_or_else(|| decode_project_path(&project_dir));
-                        let (project_name, relative_dir, branch) = git_project_info(&cwd);
-                        existing.project_name = project_name;
-                        existing.relative_dir = relative_dir;
-                        existing.branch = branch;
-                        existing.cwd = cwd;
-                        existing.model = info.model;
-                        existing.effort = info.effort;
-                        existing.total_input_tokens = info.input_tokens;
-                        existing.total_output_tokens = info.output_tokens;
-                        existing.last_activity = info.last_activity;
-                        existing.last_user_msg = info.last_user_msg;
-                        existing.jsonl_path = path;
-                        existing.last_file_size = info.file_size;
-                    }
+            for jentry in jsonl_files.flatten() {
+                let path = jentry.path();
+                if path.is_dir() {
+                    continue;
                 }
-                continue;
+                if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                    continue;
+                }
+
+                let session_id = path
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                // Look up in live map — skip if no live process
+                let live = match live_map.get(&session_id) {
+                    Some(l) => l,
+                    None => continue,
+                };
+
+                // Same session_id can appear in multiple project dirs (e.g. session
+                // started in one CWD then moved to a worktree). Prefer the larger file.
+                if matched_session_ids.contains(&session_id) {
+                    if let Some(existing) = sessions.iter_mut().find(|s| s.session_id == session_id)
+                    {
+                        let existing_size = existing
+                            .jsonl_path
+                            .metadata()
+                            .ok()
+                            .map(|m| m.len())
+                            .unwrap_or(0);
+                        let new_size = path.metadata().ok().map(|m| m.len()).unwrap_or(0);
+                        if new_size > existing_size {
+                            let prev = prev_sessions.get(&session_id);
+                            let info = parse_jsonl(
+                                &path,
+                                prev.map(|s| s.last_file_size).unwrap_or(0),
+                                prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                                prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                                prev.and_then(|s| s.model.clone()),
+                                prev.and_then(|s| s.effort.clone()),
+                                prev.and_then(|s| s.last_activity.clone()),
+                                prev.and_then(|s| s.last_user_msg.clone()),
+                            );
+                            let cwd = info
+                                .cwd
+                                .unwrap_or_else(|| decode_project_path(&project_dir));
+                            let (project_name, relative_dir, branch) = git_project_info(&cwd);
+                            existing.project_name = project_name;
+                            existing.relative_dir = relative_dir;
+                            existing.branch = branch;
+                            existing.cwd = cwd;
+                            existing.model = info.model;
+                            existing.effort = info.effort;
+                            existing.total_input_tokens = info.input_tokens;
+                            existing.total_output_tokens = info.output_tokens;
+                            existing.last_activity = info.last_activity;
+                            existing.last_user_msg = info.last_user_msg;
+                            existing.jsonl_path = path;
+                            existing.last_file_size = info.file_size;
+                        }
+                    }
+                    continue;
+                }
+
+                // Incremental JSONL parsing
+                let prev = prev_sessions.get(&session_id);
+                let info = parse_jsonl(
+                    &path,
+                    prev.map(|s| s.last_file_size).unwrap_or(0),
+                    prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                    prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                    prev.and_then(|s| s.model.clone()),
+                    prev.and_then(|s| s.effort.clone()),
+                    prev.and_then(|s| s.last_activity.clone()),
+                    prev.and_then(|s| s.last_user_msg.clone()),
+                );
+
+                let cwd = info
+                    .cwd
+                    .unwrap_or_else(|| decode_project_path(&project_dir));
+                let (project_name, relative_dir, branch) = git_project_info(&cwd);
+
+                let status = determine_status(
+                    &path,
+                    info.input_tokens,
+                    info.output_tokens,
+                    Some(&live.tmux_session),
+                );
+
+                matched_session_ids.insert(session_id.clone());
+
+                sessions.push(Session {
+                    session_id,
+                    project_name,
+                    branch,
+                    cwd,
+                    relative_dir,
+                    tmux_session: Some(live.tmux_session.clone()),
+                    tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+                    agent: detect_agent(&live.tmux_session),
+                    model: info.model,
+                    last_user_msg: info.last_user_msg,
+                    effort: info.effort,
+                    total_input_tokens: info.input_tokens,
+                    total_output_tokens: info.output_tokens,
+                    status,
+                    pid: Some(live.pid),
+                    last_activity: info.last_activity,
+                    started_at: live.started_at,
+                    jsonl_path: path,
+                    last_file_size: info.file_size,
+                });
             }
-
-            // Incremental JSONL parsing
-            let prev = prev_sessions.get(&session_id);
-            let info = parse_jsonl(
-                &path,
-                prev.map(|s| s.last_file_size).unwrap_or(0),
-                prev.map(|s| s.total_input_tokens).unwrap_or(0),
-                prev.map(|s| s.total_output_tokens).unwrap_or(0),
-                prev.and_then(|s| s.model.clone()),
-                prev.and_then(|s| s.effort.clone()),
-                prev.and_then(|s| s.last_activity.clone()),
-                prev.and_then(|s| s.last_user_msg.clone()),
-            );
-
-            let cwd = info
-                .cwd
-                .unwrap_or_else(|| decode_project_path(&project_dir));
-            let (project_name, relative_dir, branch) = git_project_info(&cwd);
-
-            let status = determine_status(
-                &path,
-                info.input_tokens,
-                info.output_tokens,
-                Some(&live.tmux_session),
-            );
-
-            matched_session_ids.insert(session_id.clone());
-
-            sessions.push(Session {
-                session_id,
-                project_name,
-                branch,
-                cwd,
-                relative_dir,
-                tmux_session: Some(live.tmux_session.clone()),
-                tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
-                agent: detect_agent(&live.tmux_session),
-                model: info.model,
-                last_user_msg: info.last_user_msg,
-                effort: info.effort,
-                total_input_tokens: info.input_tokens,
-                total_output_tokens: info.output_tokens,
-                status,
-                pid: Some(live.pid),
-                last_activity: info.last_activity,
-                started_at: live.started_at,
-                jsonl_path: path,
-                last_file_size: info.file_size,
-            });
         }
-    }
     } // for claude_dir in &project_dirs
 
     // Handle live sessions with no direct JSONL name match.
@@ -280,11 +290,11 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 .get(session_id_key.as_str())
                 .filter(|s| !s.jsonl_path.as_os_str().is_empty())
                 .map(|s| s.jsonl_path.clone());
-            let resume_path = cached.or_else(|| find_jsonl_for_resumed_session(&live.tmux_session, live.pid));
+            let resume_path =
+                cached.or_else(|| find_jsonl_for_resumed_session(&live.tmux_session, live.pid));
             // If a /clear successor exists, use it instead of the stale resume JSONL.
             resume_path.map(|p| {
-                find_clear_successor(&live.pane_cwd, &matched_session_ids, &p)
-                    .unwrap_or(p)
+                find_clear_successor(&live.pane_cwd, &matched_session_ids, &p).unwrap_or(p)
             })
         } else {
             None
@@ -414,7 +424,8 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             }
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => b.last_activity
+            (None, None) => b
+                .last_activity
                 .cmp(&a.last_activity)
                 .then(b.started_at.cmp(&a.started_at)),
         }
@@ -500,7 +511,11 @@ fn git_project_info(cwd: &str) -> (String, Option<String>, Option<String>) {
         let cache = GIT_CACHE.lock().unwrap();
         if let Some(info) = cache.as_ref().and_then(|c| c.get(cwd)) {
             if info.fetched_at.elapsed() < GIT_CACHE_TTL {
-                return (info.repo_name.clone(), info.relative_dir.clone(), info.branch.clone());
+                return (
+                    info.repo_name.clone(),
+                    info.relative_dir.clone(),
+                    info.branch.clone(),
+                );
             }
         }
     }
@@ -556,7 +571,9 @@ fn fetch_canonical_repo_name(cwd: &str) -> Option<String> {
     } else {
         &resolved
     };
-    repo_root.file_name().map(|n| n.to_string_lossy().to_string())
+    repo_root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
 }
 
 fn fetch_git_branch(cwd: &str) -> Option<String> {
@@ -613,8 +630,7 @@ fn decode_project_path(project_dir: &Path) -> String {
     // Convert back: leading - becomes /, internal - becomes /
     // This is lossy (can't distinguish original - from / or . or _) but good enough
     if name.starts_with('-') {
-        name.replacen('-', "/", 1)
-            .replace('-', "/")
+        name.replacen('-', "/", 1).replace('-', "/")
     } else {
         name
     }
@@ -793,7 +809,8 @@ fn parse_jsonl(
                 // Extract effort if present ("with <effort> effort")
                 let (model_part, new_effort) = if let Some(wp) = remainder.find("with ") {
                     let after_with = &remainder[wp + 5..];
-                    let eff = after_with.find(" effort")
+                    let eff = after_with
+                        .find(" effort")
                         .map(|end| after_with[..end].trim().to_string())
                         .filter(|s| !s.is_empty());
                     (&remainder[..wp], eff)
@@ -955,17 +972,23 @@ fn strip_ansi(s: &str) -> String {
         if c == '\x1b' {
             // Raw ESC byte: skip until 'm'
             for next in chars.by_ref() {
-                if next == 'm' { break; }
+                if next == 'm' {
+                    break;
+                }
             }
         } else if c == '\\' && chars.peek() == Some(&'u') {
             // Check for JSON-escaped \\u001b
             let rest: String = chars.clone().take(5).collect();
             if rest.starts_with("u001b") || rest.starts_with("u001B") {
                 // Consume "u001b" (5 chars)
-                for _ in 0..5 { chars.next(); }
+                for _ in 0..5 {
+                    chars.next();
+                }
                 // Skip the ANSI parameter sequence until 'm'
                 for next in chars.by_ref() {
-                    if next == 'm' { break; }
+                    if next == 'm' {
+                        break;
+                    }
                 }
             } else {
                 result.push(c);
@@ -991,43 +1014,51 @@ fn find_clear_successor(
     matched_session_ids: &std::collections::HashSet<String>,
     current_jsonl: &Path,
 ) -> Option<PathBuf> {
-    let cur_mtime = current_jsonl.metadata().ok().and_then(|m| m.modified().ok())?;
+    let cur_mtime = current_jsonl
+        .metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())?;
     let encoded = encode_project_path(cwd);
 
     let mut best: Option<(PathBuf, SystemTime)> = None;
     for projects_dir in claude_project_dirs() {
-    let project_dir = projects_dir.join(&encoded);
-    if !project_dir.is_dir() {
-        continue;
-    }
-    for entry in fs::read_dir(&project_dir).ok().into_iter().flatten().flatten() {
-        let path = entry.path();
-        if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+        let project_dir = projects_dir.join(&encoded);
+        if !project_dir.is_dir() {
             continue;
         }
-        let session_id = path
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        if matched_session_ids.contains(&session_id) {
-            continue;
+        for entry in fs::read_dir(&project_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let path = entry.path();
+            if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                continue;
+            }
+            let session_id = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            if matched_session_ids.contains(&session_id) {
+                continue;
+            }
+            let modified = match path.metadata().ok().and_then(|m| m.modified().ok()) {
+                Some(t) => t,
+                None => continue,
+            };
+            // Must be newer than the current JSONL
+            if modified <= cur_mtime {
+                continue;
+            }
+            // Check for /clear marker in first few lines
+            if !is_clear_born(&path) {
+                continue;
+            }
+            if best.as_ref().map_or(true, |(_, t)| modified > *t) {
+                best = Some((path, modified));
+            }
         }
-        let modified = match path.metadata().ok().and_then(|m| m.modified().ok()) {
-            Some(t) => t,
-            None => continue,
-        };
-        // Must be newer than the current JSONL
-        if modified <= cur_mtime {
-            continue;
-        }
-        // Check for /clear marker in first few lines
-        if !is_clear_born(&path) {
-            continue;
-        }
-        if best.as_ref().map_or(true, |(_, t)| modified > *t) {
-            best = Some((path, modified));
-        }
-    }
     } // for projects_dir
     best.map(|(p, _)| p)
 }
@@ -1059,15 +1090,15 @@ fn is_clear_born(path: &Path) -> bool {
 fn find_jsonl_by_session_id(session_id: &str) -> Option<PathBuf> {
     let mut best: Option<(PathBuf, u64)> = None;
     for projects_dir in claude_project_dirs() {
-    for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
-        let candidate = entry.path().join(format!("{session_id}.jsonl"));
-        if candidate.exists() {
-            let size = candidate.metadata().ok().map(|m| m.len()).unwrap_or(0);
-            if best.as_ref().map_or(true, |(_, s)| size > *s) {
-                best = Some((candidate, size));
+        for entry in fs::read_dir(&projects_dir).ok()?.flatten() {
+            let candidate = entry.path().join(format!("{session_id}.jsonl"));
+            if candidate.exists() {
+                let size = candidate.metadata().ok().map(|m| m.len()).unwrap_or(0);
+                if best.as_ref().map_or(true, |(_, s)| size > *s) {
+                    best = Some((candidate, size));
+                }
             }
         }
-    }
     } // for projects_dir
     best.map(|(p, _)| p)
 }
@@ -1107,7 +1138,12 @@ pub fn find_live_tmux_for_session(session_id: &str) -> Option<String> {
 
 pub fn find_session_cwd(session_id: &str) -> Option<String> {
     for projects_dir in claude_project_dirs() {
-        for entry in fs::read_dir(&projects_dir).ok().into_iter().flatten().flatten() {
+        for entry in fs::read_dir(&projects_dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             let jsonl_path = entry.path().join(format!("{session_id}.jsonl"));
             if !jsonl_path.exists() {
                 continue;
@@ -1134,7 +1170,12 @@ pub fn find_session_cwd(session_id: &str) -> Option<String> {
 /// - Working: JSONL modified in last 5s
 /// - Input: last activity within 10 minutes (active conversation, waiting for user)
 /// - Idle: last activity older than 10 minutes
-fn determine_status(_path: &Path, input_tokens: u64, output_tokens: u64, tmux_session: Option<&str>) -> SessionStatus {
+fn determine_status(
+    _path: &Path,
+    input_tokens: u64,
+    output_tokens: u64,
+    tmux_session: Option<&str>,
+) -> SessionStatus {
     // tmux pane content is the source of truth for active sessions
     if let Some(name) = tmux_session {
         let pane = pane_status(name);
@@ -1211,7 +1252,8 @@ fn pane_status(session_name: &str) -> SessionStatus {
         }
 
         // Input: selection-style permission prompts ("❯ N.")
-        if let Some(pos) = trimmed.find('\u{276F}') { // ❯
+        if let Some(pos) = trimmed.find('\u{276F}') {
+            // ❯
             let after = trimmed[pos + '\u{276F}'.len_utf8()..].trim_start();
             if after.starts_with(|c: char| c.is_ascii_digit()) {
                 return SessionStatus::Input;
@@ -1231,10 +1273,12 @@ fn pane_status(session_name: &str) -> SessionStatus {
 /// Covers dingbat spinners (✽✢✳✶✻ etc.), record symbol (⏺),
 /// and middle dot (·) used for progress lines.
 fn is_spinner(c: char) -> bool {
-    matches!(c,
-        '\u{2720}'..='\u{2767}' | // Dingbats: ✽✢✳✶✻✺✴✵ etc.
+    matches!(
+        c,
+        '\u{2720}'
+            ..='\u{2767}' | // Dingbats: ✽✢✳✶✻✺✴✵ etc.
         '\u{23FA}'              | // ⏺ (record)
-        '\u{00B7}'                // · (middle dot, used for progress)
+        '\u{00B7}' // · (middle dot, used for progress)
     )
 }
 
@@ -1271,10 +1315,8 @@ fn read_pid_session_map() -> HashMap<i32, SessionFileInfo> {
                             v.get("pid").and_then(|p| p.as_i64()),
                             v.get("sessionId").and_then(|s| s.as_str()),
                         ) {
-                            let started_at = v
-                                .get("startedAt")
-                                .and_then(|s| s.as_u64())
-                                .unwrap_or(0);
+                            let started_at =
+                                v.get("startedAt").and_then(|s| s.as_u64()).unwrap_or(0);
                             map.insert(
                                 pid as i32,
                                 SessionFileInfo {
@@ -1333,23 +1375,16 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             continue;
         }
 
-        // Claude shows up as a version number (e.g. "2.1.76") or "claude" or "node"
-        let is_claude = command
-            .chars()
-            .next()
-            .map(|c| c.is_ascii_digit())
-            .unwrap_or(false)
-            || command == "claude"
-            || command == "node";
+        let process_kind = classify_pane_process(command, process_args(pid).as_deref());
 
-        // Codex and gemini don't write ~/.claude/sessions files — use pane PID directly.
-        let is_other_agent = command == "codex" || command == "gemini";
-
-        if is_claude {
+        if process_kind == Some("claude") {
             // pane_pid is the initial process — it may be claude itself (recon launch)
             // or a shell with claude as the foreground child (manual `claude` in a terminal).
             // Try the pane PID first, fall back to searching children.
-            let claude_pid = if sessions_dirs.iter().any(|d| d.join(format!("{pid}.json")).exists()) {
+            let claude_pid = if sessions_dirs
+                .iter()
+                .any(|d| d.join(format!("{pid}.json")).exists())
+            {
                 Some(pid)
             } else {
                 find_claude_child_pid(pid)
@@ -1357,7 +1392,8 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             if let Some(cpid) = claude_pid {
                 results.push((cpid, session_name.to_string(), pane_path.to_string()));
             }
-        } else if is_other_agent {
+        } else if matches!(process_kind, Some("codex" | "gemini")) {
+            // Codex and Gemini don't write ~/.claude/sessions files — use the pane PID directly.
             results.push((pid, session_name.to_string(), pane_path.to_string()));
         } else if command == "bash" || command == "sh" || command == "zsh" {
             if let Some(claude_pid) = find_claude_child_pid(pid) {
@@ -1367,6 +1403,64 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
     }
 
     results
+}
+
+fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static str> {
+    if command
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(false)
+        || command == "claude"
+    {
+        return Some("claude");
+    }
+    if command == "codex" {
+        return Some("codex");
+    }
+    if command == "gemini" {
+        return Some("gemini");
+    }
+    if command != "node" {
+        return None;
+    }
+
+    let Some(args) = args else {
+        return None;
+    };
+    for part in args.split_whitespace() {
+        let binary = std::path::Path::new(part)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(part);
+        if binary == "codex" {
+            return Some("codex");
+        }
+        if binary == "claude" {
+            return Some("claude");
+        }
+        if binary == "gemini" {
+            return Some("gemini");
+        }
+    }
+
+    None
+}
+
+fn process_args(pid: i32) -> Option<String> {
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "args="])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let args = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if args.is_empty() {
+        None
+    } else {
+        Some(args)
+    }
 }
 
 /// Check if a shell process has a claude child by looking for a child PID
@@ -1384,6 +1478,38 @@ fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter_map(|l| l.trim().parse::<i32>().ok())
-        .find(|pid| sessions_dirs.iter().any(|d| d.join(format!("{pid}.json")).exists()))
+        .find(|pid| {
+            sessions_dirs
+                .iter()
+                .any(|d| d.join(format!("{pid}.json")).exists())
+        })
 }
 
+#[cfg(test)]
+mod tests {
+    use super::classify_pane_process;
+
+    #[test]
+    fn classifies_node_wrapped_codex_as_codex() {
+        assert_eq!(
+            classify_pane_process(
+                "node",
+                Some("node /Users/jcjustin/.nvm/versions/node/v22.22.0/bin/codex --full-auto")
+            ),
+            Some("codex")
+        );
+    }
+
+    #[test]
+    fn classifies_numeric_claude_binary_as_claude() {
+        assert_eq!(classify_pane_process("2.1.87", None), Some("claude"));
+    }
+
+    #[test]
+    fn ignores_unrelated_node_processes() {
+        assert_eq!(
+            classify_pane_process("node", Some("node /Users/jcjustin/app/server.js")),
+            None
+        );
+    }
+}
