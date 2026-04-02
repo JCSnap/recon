@@ -24,11 +24,12 @@ pub enum Agent {
     Claude2,
     Codex,
     Gemini,
+    Opencode,
 }
 
 impl Agent {
     pub fn all() -> &'static [Agent] {
-        &[Agent::Claude1, Agent::Claude2, Agent::Codex, Agent::Gemini]
+        &[Agent::Claude1, Agent::Claude2, Agent::Codex, Agent::Gemini, Agent::Opencode]
     }
 
     pub fn from_str(s: &str) -> Option<Agent> {
@@ -41,6 +42,7 @@ impl Agent {
             Agent::Claude2 => "claude-2",
             Agent::Codex => "codex",
             Agent::Gemini => "gemini",
+            Agent::Opencode => "opencode",
         }
     }
 
@@ -49,6 +51,7 @@ impl Agent {
             Agent::Claude1 | Agent::Claude2 => "claude",
             Agent::Codex => "codex",
             Agent::Gemini => "gemini",
+            Agent::Opencode => "opencode",
         }
     }
 
@@ -77,6 +80,10 @@ impl Agent {
             Agent::Gemini => {
                 let path = which_tool("gemini").unwrap_or_else(|| "gemini".to_string());
                 (path, &["-y"], None)
+            }
+            Agent::Opencode => {
+                let path = which_tool("opencode").unwrap_or_else(|| "opencode".to_string());
+                (path, &[], None)
             }
         }
     }
