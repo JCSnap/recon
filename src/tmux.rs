@@ -75,7 +75,7 @@ impl Agent {
             }
             Agent::Codex => {
                 let path = which_tool("codex").unwrap_or_else(|| "codex".to_string());
-                (path, &["--full-auto"], None)
+                (path, &["--sandbox", "danger-full-access"], None)
             }
             Agent::Gemini => {
                 let path = which_tool("gemini").unwrap_or_else(|| "gemini".to_string());
