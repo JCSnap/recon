@@ -2,11 +2,11 @@ use std::io;
 
 use crossterm::event::{self, Event, KeyCode};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout},
     style::{Color, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
+    Frame,
 };
 
 use crate::tmux::{self, Agent};
@@ -57,16 +57,14 @@ impl NewSessionForm {
             KeyCode::Esc => {
                 self.result = Some(String::new());
             }
-            KeyCode::Enter => {
-                match self.active {
-                    Field::Tag => {
-                        self.active = Field::AgentSelect;
-                    }
-                    Field::AgentSelect => {
-                        self.launch();
-                    }
+            KeyCode::Enter => match self.active {
+                Field::Tag => {
+                    self.active = Field::AgentSelect;
                 }
-            }
+                Field::AgentSelect => {
+                    self.launch();
+                }
+            },
             KeyCode::Left => {
                 if matches!(self.active, Field::AgentSelect) {
                     let n = Agent::all().len();
@@ -86,26 +84,28 @@ impl NewSessionForm {
                     self.cursor_pos += 1;
                 }
             }
-            KeyCode::Tab | KeyCode::Down => {
-                match self.active {
-                    Field::Tag => { self.active = Field::AgentSelect; }
-                    Field::AgentSelect => {
-                        self.active = Field::Tag;
-                        self.cursor_pos = self.tag.len();
-                    }
+            KeyCode::Tab | KeyCode::Down => match self.active {
+                Field::Tag => {
+                    self.active = Field::AgentSelect;
                 }
-            }
-            KeyCode::BackTab | KeyCode::Up => {
-                match self.active {
-                    Field::Tag => { self.active = Field::AgentSelect; }
-                    Field::AgentSelect => {
-                        self.active = Field::Tag;
-                        self.cursor_pos = self.tag.len();
-                    }
+                Field::AgentSelect => {
+                    self.active = Field::Tag;
+                    self.cursor_pos = self.tag.len();
                 }
-            }
+            },
+            KeyCode::BackTab | KeyCode::Up => match self.active {
+                Field::Tag => {
+                    self.active = Field::AgentSelect;
+                }
+                Field::AgentSelect => {
+                    self.active = Field::Tag;
+                    self.cursor_pos = self.tag.len();
+                }
+            },
             KeyCode::Backspace => {
-                if matches!(self.active, Field::AgentSelect) { return; }
+                if matches!(self.active, Field::AgentSelect) {
+                    return;
+                }
                 let pos = self.cursor_pos;
                 if pos > 0 {
                     self.tag.remove(pos - 1);
@@ -113,16 +113,24 @@ impl NewSessionForm {
                 }
             }
             KeyCode::Delete => {
-                if matches!(self.active, Field::AgentSelect) { return; }
+                if matches!(self.active, Field::AgentSelect) {
+                    return;
+                }
                 let pos = self.cursor_pos;
                 if pos < self.tag.len() {
                     self.tag.remove(pos);
                 }
             }
-            KeyCode::Home => { self.cursor_pos = 0; }
-            KeyCode::End => { self.cursor_pos = self.tag.len(); }
+            KeyCode::Home => {
+                self.cursor_pos = 0;
+            }
+            KeyCode::End => {
+                self.cursor_pos = self.tag.len();
+            }
             KeyCode::Char(c) => {
-                if matches!(self.active, Field::AgentSelect) { return; }
+                if matches!(self.active, Field::AgentSelect) {
+                    return;
+                }
                 let pos = self.cursor_pos;
                 self.tag.insert(pos, c);
                 self.cursor_pos = pos + 1;
@@ -138,13 +146,21 @@ impl NewSessionForm {
         let tag_block = Block::default()
             .borders(Borders::ALL)
             .title(" Tag (optional) ")
-            .border_style(Style::default().fg(if tag_active { Color::Cyan } else { Color::DarkGray }));
+            .border_style(Style::default().fg(if tag_active {
+                Color::Cyan
+            } else {
+                Color::DarkGray
+            }));
 
         let agent_active = matches!(self.active, Field::AgentSelect);
         let agent_block = Block::default()
             .borders(Borders::ALL)
             .title(" Agent ")
-            .border_style(Style::default().fg(if agent_active { Color::Cyan } else { Color::DarkGray }));
+            .border_style(Style::default().fg(if agent_active {
+                Color::Cyan
+            } else {
+                Color::DarkGray
+            }));
 
         let rows = Layout::vertical([
             Constraint::Length(3), // Tag box
@@ -171,7 +187,10 @@ impl NewSessionForm {
                 Span::styled(" ▶", Style::default().fg(Color::Cyan)),
             ])
         } else {
-            Line::from(Span::styled(agent_label, Style::default().fg(Color::DarkGray)))
+            Line::from(Span::styled(
+                agent_label,
+                Style::default().fg(Color::DarkGray),
+            ))
         };
         frame.render_widget(Paragraph::new(agent_line), agent_inner);
 
@@ -217,7 +236,11 @@ pub fn run_new_session_form() -> io::Result<Option<String>> {
         terminal.draw(|f| form.render(f))?;
 
         if let Some(ref result) = form.result {
-            let name = if result.is_empty() { None } else { Some(result.clone()) };
+            let name = if result.is_empty() {
+                None
+            } else {
+                Some(result.clone())
+            };
 
             crossterm::terminal::disable_raw_mode()?;
             crossterm::execute!(

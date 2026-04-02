@@ -1,9 +1,9 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Row, Table, Paragraph},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    Frame,
 };
 
 use crate::app::App;
@@ -58,10 +58,7 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
                 None => format!(" {} ", i + 1),
             };
 
-            let tmux_name = session
-                .tmux_session
-                .as_deref()
-                .unwrap_or("—");
+            let tmux_name = session.tmux_session.as_deref().unwrap_or("—");
 
             // Status: colored dot + label
             let (status_dot, status_label, status_color) = match session.status {
@@ -135,23 +132,21 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let widths = [
-        Constraint::Length(4),   // #
-        Constraint::Length(16),  // Session
-        Constraint::Length(6),   // Agent
-        Constraint::Min(20),     // Project (repo::subdir::branch)
-        Constraint::Length(10),  // Status
-        Constraint::Length(20),  // Model
-        Constraint::Length(14),  // Context
-        Constraint::Length(14),  // Last Activity
+        Constraint::Length(4),  // #
+        Constraint::Length(16), // Session
+        Constraint::Length(6),  // Agent
+        Constraint::Min(20),    // Project (repo::subdir::branch)
+        Constraint::Length(10), // Status
+        Constraint::Length(20), // Model
+        Constraint::Length(14), // Context
+        Constraint::Length(14), // Last Activity
     ];
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(" recon — Claude Code Sessions "),
-        );
+    let table = Table::new(rows, widths).header(header).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(" recon — Claude Code Sessions "),
+    );
 
     frame.render_widget(table, area);
 
@@ -209,13 +204,21 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
 
         let detail = match usage::get(label) {
             Some(info) => {
-                let pct_part = info.effective_pct()
+                let pct_part = info
+                    .effective_pct()
                     .map(|p| {
-                        let hint = if p >= 90 { "!" } else if p >= 75 { "~" } else { "" };
+                        let hint = if p >= 90 {
+                            "!"
+                        } else if p >= 75 {
+                            "~"
+                        } else {
+                            ""
+                        };
                         format!("{hint}{p}%")
                     })
                     .unwrap_or_else(|| "?%".to_string());
-                let reset_part = info.effective_resets_at()
+                let reset_part = info
+                    .effective_resets_at()
                     .map(|r| format!(" resets {r}"))
                     .unwrap_or_default();
                 format!(": {pct_part}{reset_part}  ")
@@ -261,7 +264,6 @@ fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(footer, area);
 }
 
-
 fn agent_display_name(agent: &str) -> &'static str {
     match agent {
         "claude" => "cc1",
@@ -274,9 +276,9 @@ fn agent_display_name(agent: &str) -> &'static str {
 
 fn agent_color(agent: &str) -> Color {
     match agent {
-        "claude" | "claude-2" => Color::Rgb(217, 119, 62),  // orange
-        "codex" => Color::Rgb(110, 200, 120),                // green
-        "gemini" => Color::Rgb(100, 150, 255),               // blue
+        "claude" | "claude-2" => Color::Rgb(217, 119, 62), // orange
+        "codex" => Color::Rgb(110, 200, 120),              // green
+        "gemini" => Color::Rgb(100, 150, 255),             // blue
         _ => Color::DarkGray,
     }
 }

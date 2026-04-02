@@ -35,7 +35,11 @@ fn main() -> io::Result<()> {
                 tmux::switch_to_session(&name);
             }
         }
-        Some(Command::Launch { tag, agent, name_only }) => {
+        Some(Command::Launch {
+            tag,
+            agent,
+            name_only,
+        }) => {
             let agent = agent
                 .as_deref()
                 .and_then(tmux::Agent::from_str)
@@ -56,7 +60,11 @@ fn main() -> io::Result<()> {
                 }
             }
         }
-        Some(Command::Resume { id, name, no_attach }) => {
+        Some(Command::Resume {
+            id,
+            name,
+            no_attach,
+        }) => {
             if let Some(session_id) = id {
                 match tmux::resume_session(&session_id, name.as_deref()) {
                     Ok(sess) => {
@@ -89,7 +97,11 @@ fn main() -> io::Result<()> {
         Some(Command::Next) => {
             let mut app = App::new();
             app.refresh();
-            if let Some(session) = app.sessions.iter().find(|s| s.status == session::SessionStatus::Input) {
+            if let Some(session) = app
+                .sessions
+                .iter()
+                .find(|s| s.status == session::SessionStatus::Input)
+            {
                 if let Some(name) = &session.tmux_session {
                     tmux::switch_to_session(name);
                 }
@@ -151,7 +163,10 @@ fn run_tui(start_mode: ViewMode) -> io::Result<()> {
     Ok(())
 }
 
-fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: ViewMode) -> io::Result<()> {
+fn run_app(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    start_mode: ViewMode,
+) -> io::Result<()> {
     let mut app = App::new();
     app.view_mode = start_mode;
     app.refresh();
@@ -164,11 +179,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, start_mode: Vi
         if app.view_mode == ViewMode::View {
             view_ui::resolve_zoom(&mut app);
         }
-        terminal.draw(|f| {
-            match app.view_mode {
-                ViewMode::Table => ui::render(f, &app),
-                ViewMode::View => view_ui::render(f, &app),
-            }
+        terminal.draw(|f| match app.view_mode {
+            ViewMode::Table => ui::render(f, &app),
+            ViewMode::View => view_ui::render(f, &app),
         })?;
 
         app.advance_tick();

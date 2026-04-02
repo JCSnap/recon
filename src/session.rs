@@ -1232,6 +1232,11 @@ fn classify_pane_content(content: &str) -> SessionStatus {
             return SessionStatus::Working;
         }
 
+        // Working: opencode status bar ("esc interrupt" without "to").
+        if lower.contains("esc interrupt") {
+            return SessionStatus::Working;
+        }
+
         // Working: background agents are running (status bar shows "N local agent")
         // This may not be on the very last line — INSERT mode bar can appear below it.
         // Require a digit before "local agent" to avoid matching conversational text.
@@ -1401,8 +1406,8 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             if let Some(cpid) = claude_pid {
                 results.push((cpid, session_name.to_string(), pane_path.to_string()));
             }
-        } else if matches!(process_kind, Some("codex" | "gemini")) {
-            // Codex and Gemini don't write ~/.claude/sessions files — use the pane PID directly.
+        } else if matches!(process_kind, Some("codex" | "gemini" | "opencode")) {
+            // Codex, Gemini, and opencode don't write ~/.claude/sessions files — use the pane PID directly.
             results.push((pid, session_name.to_string(), pane_path.to_string()));
         } else if command == "bash" || command == "sh" || command == "zsh" {
             if let Some(claude_pid) = find_claude_child_pid(pid) {
@@ -1430,6 +1435,9 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
     if command == "gemini" {
         return Some("gemini");
     }
+    if command == "opencode" {
+        return Some("opencode");
+    }
     if command != "node" {
         return None;
     }
@@ -1450,6 +1458,9 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
         }
         if binary == "gemini" {
             return Some("gemini");
+        }
+        if binary == "opencode" {
+            return Some("opencode");
         }
     }
 
@@ -1526,6 +1537,28 @@ mod tests {
     fn classifies_codex_working_status_bar_as_working() {
         let content = "\n• Working (11s • esc to interrupt)\n\n› Explain this codebase\n";
         assert_eq!(classify_pane_content(content), SessionStatus::Working);
+    }
+
+    #[test]
+    fn classifies_opencode_working_status_bar_as_working() {
+        let content = "\n Build  Kimi K2.5 (Azure)  Kimi Azure\n\nesc interrupt\n";
+        assert_eq!(classify_pane_content(content), SessionStatus::Working);
+    }
+
+    #[test]
+    fn classifies_opencode_command_as_opencode() {
+        assert_eq!(classify_pane_process("opencode", None), Some("opencode"));
+    }
+
+    #[test]
+    fn classifies_node_wrapped_opencode_as_opencode() {
+        assert_eq!(
+            classify_pane_process(
+                "node",
+                Some("node /usr/local/bin/opencode --model kimi")
+            ),
+            Some("opencode")
+        );
     }
 
     #[test]

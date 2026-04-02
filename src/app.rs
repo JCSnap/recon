@@ -20,8 +20,8 @@ pub struct App {
     pub tick: u64,
     pub view_page: usize,
     pub view_zoomed_room: Option<String>, // room name when zoomed in
-    pub view_zoom_index: Option<usize>,  // pending zoom request from key press
-    pub view_selected_agent: usize,      // selected agent within zoomed room
+    pub view_zoom_index: Option<usize>,   // pending zoom request from key press
+    pub view_selected_agent: usize,       // selected agent within zoomed room
     prev_sessions: HashMap<String, Session>,
 }
 
@@ -48,9 +48,8 @@ impl App {
             .collect();
 
         // Detect Working/Input → Idle transitions and fetch usage for that account.
-        let is_active = |s: &SessionStatus| {
-            matches!(s, SessionStatus::Working | SessionStatus::Input)
-        };
+        let is_active =
+            |s: &SessionStatus| matches!(s, SessionStatus::Working | SessionStatus::Input);
         let mut accounts_to_fetch = std::collections::HashSet::new();
         for new in &sessions {
             if new.status == SessionStatus::Idle {
@@ -124,7 +123,11 @@ impl App {
     }
 
     fn jump_to_next_input(&mut self) {
-        if let Some(session) = self.sessions.iter().find(|s| s.status == session::SessionStatus::Input) {
+        if let Some(session) = self
+            .sessions
+            .iter()
+            .find(|s| s.status == session::SessionStatus::Input)
+        {
             if let Some(name) = &session.tmux_session {
                 tmux::switch_to_session(name);
                 self.should_quit = true;
@@ -202,7 +205,9 @@ impl App {
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "claude".to_string());
-                        if let Ok(name) = tmux::create_session(&default_name, &cwd, tmux::Agent::default(), None) {
+                        if let Ok(name) =
+                            tmux::create_session(&default_name, &cwd, tmux::Agent::default(), None)
+                        {
                             tmux::switch_to_session(&name);
                             self.should_quit = true;
                         }
@@ -276,17 +281,25 @@ impl App {
     }
 
     pub fn to_json(&self, accounts: &std::collections::HashSet<String>) -> String {
-        let usage_map: serde_json::Value = accounts.iter().map(|a| {
-            let v = usage::get(a).map(|info| serde_json::json!({
-                "five_hour_pct": info.five_hour_pct,
-                "resets_at": info.resets_at,
-                "weekly_pct": info.weekly_pct,
-                "weekly_resets_at": info.weekly_resets_at,
-                "effective_pct": info.effective_pct(),
-                "effective_resets_at": info.effective_resets_at(),
-            })).unwrap_or(serde_json::Value::Null);
-            (a.clone(), v)
-        }).collect::<serde_json::Map<_, _>>().into();
+        let usage_map: serde_json::Value = accounts
+            .iter()
+            .map(|a| {
+                let v = usage::get(a)
+                    .map(|info| {
+                        serde_json::json!({
+                            "five_hour_pct": info.five_hour_pct,
+                            "resets_at": info.resets_at,
+                            "weekly_pct": info.weekly_pct,
+                            "weekly_resets_at": info.weekly_resets_at,
+                            "effective_pct": info.effective_pct(),
+                            "effective_resets_at": info.effective_resets_at(),
+                        })
+                    })
+                    .unwrap_or(serde_json::Value::Null);
+                (a.clone(), v)
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into();
 
         let sessions: Vec<serde_json::Value> = self
             .sessions
@@ -323,5 +336,3 @@ impl App {
         .unwrap_or_else(|_| "{}".to_string())
     }
 }
-
-

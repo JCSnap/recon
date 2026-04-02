@@ -64,7 +64,11 @@ impl Agent {
                 let dir = dirs::home_dir()
                     .map(|h| h.join(".claude-2").to_string_lossy().to_string())
                     .unwrap_or_else(|| "~/.claude-2".to_string());
-                (path, &["--dangerously-skip-permissions"], Some(format!("CLAUDE_CONFIG_DIR={dir}")))
+                (
+                    path,
+                    &["--dangerously-skip-permissions"],
+                    Some(format!("CLAUDE_CONFIG_DIR={dir}")),
+                )
             }
             Agent::Codex => {
                 let path = which_tool("codex").unwrap_or_else(|| "codex".to_string());
@@ -80,7 +84,12 @@ impl Agent {
 
 /// Launch an AI agent in a new tmux session with the given name and working directory.
 /// Returns the session name on success.
-pub fn create_session(name: &str, cwd: &str, agent: Agent, tag: Option<&str>) -> Result<String, String> {
+pub fn create_session(
+    name: &str,
+    cwd: &str,
+    agent: Agent,
+    tag: Option<&str>,
+) -> Result<String, String> {
     let base_name = sanitize_session_name(name);
     let session_name = unique_session_name(&base_name);
 
@@ -132,7 +141,11 @@ pub fn resume_session(session_id: &str, name: Option<&str>) -> Result<String, St
 
     // Use the original session's cwd so we start in the right project directory.
     let cwd = session::find_session_cwd(session_id)
-        .or_else(|| std::env::current_dir().map(|p| p.to_string_lossy().to_string()).ok())
+        .or_else(|| {
+            std::env::current_dir()
+                .map(|p| p.to_string_lossy().to_string())
+                .ok()
+        })
         .unwrap_or_else(|| ".".to_string());
 
     let base_name = sanitize_session_name(&tmux_name);
@@ -209,7 +222,11 @@ pub fn is_installed(name: &str) -> bool {
 fn which_tool(name: &str) -> Option<String> {
     let output = Command::new("which").arg(name).output().ok()?;
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() { None } else { Some(path) }
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
 }
 
 /// Kill a tmux session by name.

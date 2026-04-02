@@ -25,7 +25,10 @@ impl UsageInfo {
     pub fn effective_resets_at(&self) -> Option<&str> {
         match (self.five_hour_pct, self.weekly_pct) {
             (Some(a), Some(b)) if b > a => self.weekly_resets_at.as_deref(),
-            _ => self.resets_at.as_deref().or(self.weekly_resets_at.as_deref()),
+            _ => self
+                .resets_at
+                .as_deref()
+                .or(self.weekly_resets_at.as_deref()),
         }
     }
 }
@@ -187,10 +190,18 @@ fn fetch_codex() -> Option<UsageInfo> {
 
     let ok = Command::new("tmux")
         .args([
-            "new-session", "-d", "-s", session_name,
-            "-x", "120", "-y", "40",
-            "-c", "/tmp",
-            "codex", "--full-auto",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            "-x",
+            "120",
+            "-y",
+            "40",
+            "-c",
+            "/tmp",
+            "codex",
+            "--full-auto",
         ])
         .status()
         .map(|s| s.success())
@@ -247,9 +258,14 @@ fn fetch_gemini() -> Option<UsageInfo> {
 
     let ok = Command::new("tmux")
         .args([
-            "new-session", "-d", "-s", session_name,
-            "-c", "/tmp",
-            "gemini", "-y",
+            "new-session",
+            "-d",
+            "-s",
+            session_name,
+            "-c",
+            "/tmp",
+            "gemini",
+            "-y",
         ])
         .status()
         .map(|s| s.success())
@@ -370,7 +386,12 @@ fn parse_claude_output(content: &str) -> Option<UsageInfo> {
     }
 
     if five_hour_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo { five_hour_pct, resets_at, weekly_pct: None, weekly_resets_at: None })
+        Some(UsageInfo {
+            five_hour_pct,
+            resets_at,
+            weekly_pct: None,
+            weekly_resets_at: None,
+        })
     } else {
         None
     }
@@ -464,7 +485,12 @@ fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
     }
 
     if max_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo { five_hour_pct: max_pct, resets_at, weekly_pct: None, weekly_resets_at: None })
+        Some(UsageInfo {
+            five_hour_pct: max_pct,
+            resets_at,
+            weekly_pct: None,
+            weekly_resets_at: None,
+        })
     } else {
         None
     }
@@ -556,12 +582,18 @@ mod tests {
         // 42% left → 58% used
         assert_eq!(info.five_hour_pct, Some(58));
         assert!(info.resets_at.is_some(), "should have resets_at");
-        assert!(info.resets_at.as_ref().unwrap().contains("11:31"),
-            "resets_at should contain 11:31, got: {:?}", info.resets_at);
+        assert!(
+            info.resets_at.as_ref().unwrap().contains("11:31"),
+            "resets_at should contain 11:31, got: {:?}",
+            info.resets_at
+        );
         // 82% left → 18% used
         assert_eq!(info.weekly_pct, Some(18));
-        assert!(info.weekly_resets_at.as_ref().unwrap().contains("16:27"),
-            "weekly_resets_at should contain 16:27, got: {:?}", info.weekly_resets_at);
+        assert!(
+            info.weekly_resets_at.as_ref().unwrap().contains("16:27"),
+            "weekly_resets_at should contain 16:27, got: {:?}",
+            info.weekly_resets_at
+        );
         // effective should be max(58, 18) = 58
         assert_eq!(info.effective_pct(), Some(58));
     }
