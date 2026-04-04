@@ -109,21 +109,27 @@ fn claude_project_dirs() -> Vec<std::path::PathBuf> {
     candidates.into_iter().filter(|p| p.exists()).collect()
 }
 
+/// Pi agent sessions directory.
+fn pi_sessions_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".pi").join("agent").join("sessions"))
+}
+
 /// Discover sessions by scanning JSONL files, then matching to live tmux panes.
 pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Session> {
     let project_dirs = claude_project_dirs();
-    if project_dirs.is_empty() {
-        return vec![];
-    }
 
     // Build the live session map: session_id → (pid, tmux_name, started_at)
     // by joining ~/.claude/sessions/{PID}.json with tmux pane info.
     let live_map = build_live_session_map();
 
+    // Build pi session map: session_id → (jsonl_path, cwd)
+    let pi_session_map = build_pi_session_map();
+
     let mut sessions: Vec<Session> = Vec::new();
     let mut matched_session_ids: std::collections::HashSet<String> =
         std::collections::HashSet::new();
 
+    // Scan claude project directories
     for claude_dir in &project_dirs {
         // Scan all JSONL files across project directories.
         // No mtime cutoff needed — the live_map check (below) already filters out
@@ -260,6 +266,9 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             }
         }
     } // for claude_dir in &project_dirs
+
+    // Discover pi sessions
+    discover_pi_sessions(&mut sessions, &mut matched_session_ids, prev_sessions, &live_map, &pi_session_map);
 
     // Handle live sessions with no direct JSONL name match.
     // This covers two cases:
@@ -1232,6 +1241,11 @@ fn classify_pane_content(content: &str) -> SessionStatus {
             return SessionStatus::Working;
         }
 
+        // Working: pi status bar while actively working.
+        if lower.contains("working") && lower.contains("ctrl+c to interrupt") {
+            return SessionStatus::Working;
+        }
+
         // Working: opencode status bar ("esc interrupt" without "to").
         if lower.contains("esc interrupt") {
             return SessionStatus::Working;
@@ -1257,10 +1271,10 @@ fn classify_pane_content(content: &str) -> SessionStatus {
             return SessionStatus::Working;
         }
 
-        // Working: line starts with a spinner character and contains "…"
-        // Spinners: ✽(U+273D) ✢(U+2722) ✳(U+2733) ✶(U+2736) ⏺(U+23FA)
+        // Working: line starts with a spinner character and contains "…"/"..." or "to interrupt"
+        // Spinners: ✽(U+273D) ✢(U+2722) ✳(U+2733) ✶(U+2736) ⏺(U+23FA) Braille (U+2800-U+28FF)
         if let Some(first) = trimmed.chars().next() {
-            if is_spinner(first) && trimmed.contains('\u{2026}') {
+            if is_spinner(first) && (trimmed.contains('\u{2026}') || trimmed.contains("...") || trimmed.to_ascii_lowercase().contains("to interrupt")) {
                 return SessionStatus::Working;
             }
         }
@@ -1283,16 +1297,17 @@ fn classify_pane_content(content: &str) -> SessionStatus {
     SessionStatus::Idle
 }
 
-/// Check if a character is a Claude Code activity indicator.
+/// Check if a character is an activity indicator.
 /// Covers dingbat spinners (✽✢✳✶✻ etc.), record symbol (⏺),
-/// and middle dot (·) used for progress lines.
+/// middle dot (·), and Braille patterns (⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏) used by pi.
 fn is_spinner(c: char) -> bool {
     matches!(
         c,
         '\u{2720}'
             ..='\u{2767}' | // Dingbats: ✽✢✳✶✻✺✴✵ etc.
         '\u{23FA}'              | // ⏺ (record)
-        '\u{00B7}' // · (middle dot, used for progress)
+        '\u{00B7}'              | // · (middle dot, used for progress)
+        '\u{2800}'..='\u{28FF}'   // Braille patterns (pi spinner)
     )
 }
 
@@ -1406,8 +1421,8 @@ fn discover_claude_tmux_panes() -> Vec<(i32, String, String)> {
             if let Some(cpid) = claude_pid {
                 results.push((cpid, session_name.to_string(), pane_path.to_string()));
             }
-        } else if matches!(process_kind, Some("codex" | "gemini" | "opencode")) {
-            // Codex, Gemini, and opencode don't write ~/.claude/sessions files — use the pane PID directly.
+        } else if matches!(process_kind, Some("codex" | "gemini" | "opencode" | "pi")) {
+            // Codex, Gemini, opencode, and pi don't write ~/.claude/sessions files — use the pane PID directly.
             results.push((pid, session_name.to_string(), pane_path.to_string()));
         } else if command == "bash" || command == "sh" || command == "zsh" {
             if let Some(claude_pid) = find_claude_child_pid(pid) {
@@ -1438,6 +1453,9 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
     if command == "opencode" {
         return Some("opencode");
     }
+    if command == "pi" {
+        return Some("pi");
+    }
     if command != "node" {
         return None;
     }
@@ -1461,6 +1479,9 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
         }
         if binary == "opencode" {
             return Some("opencode");
+        }
+        if binary == "pi" {
+            return Some("pi");
         }
     }
 
@@ -1503,6 +1524,419 @@ fn find_claude_child_pid(parent_pid: i32) -> Option<i32> {
                 .iter()
                 .any(|d| d.join(format!("{pid}.json")).exists())
         })
+}
+
+// ── Pi session discovery ─────────────────────────────────────────────────────
+
+/// Info about a discovered pi session.
+#[derive(Debug, Clone)]
+struct PiSessionInfo {
+    #[allow(dead_code)]
+    session_id: String,
+    jsonl_path: PathBuf,
+    cwd: String,
+    started_at: u64,
+}
+
+/// Build a map from pi session_id → (jsonl_path, cwd, started_at).
+/// Pi stores sessions in ~/.pi/agent/sessions/{encoded-cwd}/{timestamp}_{session-id}.jsonl
+fn build_pi_session_map() -> HashMap<String, PiSessionInfo> {
+    let sessions_dir = match pi_sessions_dir() {
+        Some(d) if d.exists() => d,
+        _ => return HashMap::new(),
+    };
+
+    let mut map = HashMap::new();
+
+    let entries = match fs::read_dir(&sessions_dir) {
+        Ok(e) => e,
+        Err(_) => return map,
+    };
+
+    for entry in entries.flatten() {
+        let project_dir = entry.path();
+        if !project_dir.is_dir() {
+            continue;
+        }
+
+        // Decode the directory name back to a path
+        let cwd = decode_pi_dir_name(&project_dir);
+
+        let jsonl_files = match fs::read_dir(&project_dir) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+
+        for jentry in jsonl_files.flatten() {
+            let path = jentry.path();
+            if path.is_dir() {
+                continue;
+            }
+            if !path.extension().map(|e| e == "jsonl").unwrap_or(false) {
+                continue;
+            }
+
+            // Parse filename: {timestamp}_{session-id}.jsonl
+            let filename = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            // Extract session_id from after the underscore
+            let session_id = filename.split('_').nth(1).unwrap_or(&filename).to_string();
+            if session_id.is_empty() {
+                continue;
+            }
+
+            // Get file mtime as started_at approximation
+            let started_at = path
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+
+            // If multiple files for same session, prefer newest
+            let existing = map.get(&session_id);
+            let should_insert = existing.map_or(true, |e: &PiSessionInfo| started_at > e.started_at);
+
+            if should_insert {
+                map.insert(
+                    session_id.clone(),
+                    PiSessionInfo {
+                        session_id,
+                        jsonl_path: path,
+                        cwd: cwd.clone(),
+                        started_at,
+                    },
+                );
+            }
+        }
+    }
+
+    map
+}
+
+/// Decode pi directory name back to a path.
+/// Pi encodes paths like "/Users/foo/bar" as "--Users-foo-bar--"
+fn decode_pi_dir_name(dir: &Path) -> String {
+    let name = dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    // Remove leading/trailing -- and convert - back to /
+    let decoded = name
+        .trim_start_matches("--")
+        .trim_end_matches("--")
+        .replace('-', "/");
+
+    // If it looks like a valid path, use it; otherwise fall back to unknown
+    if decoded.starts_with('/') {
+        decoded
+    } else {
+        dir.to_string_lossy().to_string()
+    }
+}
+
+/// Discover and add pi sessions to the sessions list.
+fn discover_pi_sessions(
+    sessions: &mut Vec<Session>,
+    matched_session_ids: &mut std::collections::HashSet<String>,
+    prev_sessions: &HashMap<String, Session>,
+    live_map: &HashMap<String, LiveSessionInfo>,
+    pi_session_map: &HashMap<String, PiSessionInfo>,
+) {
+    // Get set of tmux sessions running pi
+    let pi_tmux_sessions: std::collections::HashMap<String, &LiveSessionInfo> = live_map
+        .values()
+        .filter(|live| {
+            // Check if this tmux session is running pi by looking at the process
+            detect_agent(&live.tmux_session) == "pi"
+        })
+        .map(|live| (live.tmux_session.clone(), live))
+        .collect();
+
+    if pi_tmux_sessions.is_empty() {
+        return;
+    }
+
+    for (session_id, pi_info) in pi_session_map {
+        // Check if this pi session matches a live tmux pane
+        let live = pi_tmux_sessions
+            .values()
+            .find(|live| live.pane_cwd == pi_info.cwd || same_path(&live.pane_cwd, &pi_info.cwd));
+
+        if let Some(live) = live {
+            let prev = prev_sessions.get(session_id);
+            let info = parse_pi_jsonl(
+                &pi_info.jsonl_path,
+                prev.map(|s| s.last_file_size).unwrap_or(0),
+                prev.map(|s| s.total_input_tokens).unwrap_or(0),
+                prev.map(|s| s.total_output_tokens).unwrap_or(0),
+                prev.and_then(|s| s.model.clone()),
+                prev.and_then(|s| s.last_activity.clone()),
+            );
+
+            let (project_name, relative_dir, branch) = git_project_info(&pi_info.cwd);
+
+            let status = determine_status(
+                &pi_info.jsonl_path,
+                info.input_tokens,
+                info.output_tokens,
+                Some(&live.tmux_session),
+            );
+
+            matched_session_ids.insert(session_id.clone());
+
+            sessions.push(Session {
+                session_id: session_id.clone(),
+                project_name,
+                branch,
+                cwd: pi_info.cwd.clone(),
+                relative_dir,
+                tmux_session: Some(live.tmux_session.clone()),
+                tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+                agent: "pi".to_string(),
+                model: info.model,
+                last_user_msg: info.last_user_msg,
+                effort: None, // Pi doesn't have effort levels
+                total_input_tokens: info.input_tokens,
+                total_output_tokens: info.output_tokens,
+                status,
+                pid: Some(live.pid),
+                last_activity: info.last_activity,
+                started_at: pi_info.started_at,
+                jsonl_path: pi_info.jsonl_path.clone(),
+                last_file_size: info.file_size,
+            });
+        }
+    }
+
+    // Handle live pi sessions with no matching JSONL (new sessions)
+    let known_tmux: std::collections::HashSet<String> = sessions
+        .iter()
+        .filter(|s| s.agent == "pi")
+        .filter_map(|s| s.tmux_session.clone())
+        .collect();
+
+    for (_, live) in &pi_tmux_sessions {
+        if known_tmux.contains(&live.tmux_session) {
+            continue;
+        }
+
+        let (project_name, relative_dir, branch) = git_project_info(&live.pane_cwd);
+        let status = pane_status(&live.tmux_session);
+
+        // Generate a placeholder session ID
+        let session_id = format!("pi-tmux-{}", live.tmux_session);
+
+        sessions.push(Session {
+            session_id,
+            project_name,
+            relative_dir,
+            branch,
+            cwd: live.pane_cwd.clone(),
+            tmux_session: Some(live.tmux_session.clone()),
+            tag: read_tmux_env(&live.tmux_session, "RECON_TAG"),
+            agent: "pi".to_string(),
+            model: None,
+            last_user_msg: None,
+            effort: None,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            status,
+            pid: Some(live.pid),
+            last_activity: None,
+            started_at: live.started_at,
+            jsonl_path: PathBuf::new(),
+            last_file_size: 0,
+        });
+    }
+}
+
+/// Pi JSONL entry structures.
+#[derive(Deserialize)]
+struct PiJsonlEntry {
+    #[serde(rename = "type")]
+    entry_type: String,
+    #[serde(default)]
+    timestamp: Option<String>,
+    #[serde(default)]
+    message: Option<PiMessageEntry>,
+    // model_change has these at top level
+    #[serde(default, rename = "modelId")]
+    model_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PiMessageEntry {
+    #[serde(default)]
+    role: Option<String>,
+    #[serde(default)]
+    content: Option<serde_json::Value>,
+    #[serde(default)]
+    usage: Option<PiUsageEntry>,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PiUsageEntry {
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(rename = "totalTokens", default)]
+    total_tokens: u64,
+}
+
+/// Parse pi JSONL file, incrementally if possible.
+fn parse_pi_jsonl(
+    path: &Path,
+    prev_file_size: u64,
+    prev_input: u64,
+    prev_output: u64,
+    prev_model: Option<String>,
+    prev_activity: Option<String>,
+) -> ParsedInfo {
+    let file = match fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            return ParsedInfo {
+                input_tokens: prev_input,
+                output_tokens: prev_output,
+                model: prev_model,
+                effort: None,
+                cwd: None,
+                last_activity: prev_activity,
+                last_user_msg: None,
+                file_size: 0,
+            }
+        }
+    };
+
+    let file_size = file.metadata().map(|m| m.len()).unwrap_or(0);
+
+    if file_size == prev_file_size && prev_file_size > 0 {
+        return ParsedInfo {
+            input_tokens: prev_input,
+            output_tokens: prev_output,
+            model: prev_model,
+            effort: None,
+            cwd: None,
+            last_activity: prev_activity,
+            last_user_msg: None,
+            file_size,
+        };
+    }
+
+    let mut reader = BufReader::new(file);
+    let mut total_input = prev_input;
+    let mut total_output = prev_output;
+    let mut model = prev_model;
+    let mut last_activity = prev_activity;
+    let mut last_user_msg: Option<String> = None;
+
+    if prev_file_size > 0 {
+        let _ = reader.seek(SeekFrom::Start(prev_file_size));
+    } else {
+        total_input = 0;
+        total_output = 0;
+        model = None;
+        last_activity = None;
+        last_user_msg = None;
+    }
+
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => break,
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if let Ok(entry) = serde_json::from_str::<PiJsonlEntry>(trimmed) {
+            // Update timestamp
+            if let Some(ts) = entry.timestamp {
+                last_activity = Some(ts);
+            }
+
+            match entry.entry_type.as_str() {
+                "model_change" => {
+                    // Extract model - modelId is at top level for model_change
+                    if let Some(m) = entry.model_id {
+                        model = Some(m);
+                    }
+                }
+                "message" => {
+                    if let Some(msg) = entry.message {
+                        // Extract usage info and model from assistant messages
+                        if msg.role.as_deref() == Some("assistant") {
+                            if let Some(usage) = msg.usage {
+                                if usage.input_tokens > 0 || usage.output_tokens > 0 {
+                                    total_input = usage.input_tokens;
+                                    total_output = usage.output_tokens;
+                                } else if usage.total_tokens > 0 {
+                                    // Fallback to total_tokens if available
+                                    total_output = usage.total_tokens.saturating_sub(total_input);
+                                }
+                            }
+                            // Also extract model from assistant message if present
+                            if let Some(m) = msg.model {
+                                model = Some(m);
+                            }
+                        }
+
+                        // Extract last user message
+                        if msg.role.as_deref() == Some("user") && msg.role.as_deref() != Some("bashExecution") {
+                            if let Some(content) = msg.content {
+                                if let Some(text) = extract_user_text(&content) {
+                                    last_user_msg = Some(text);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    ParsedInfo {
+        input_tokens: total_input,
+        output_tokens: total_output,
+        model,
+        effort: None,
+        cwd: None,
+        last_activity,
+        last_user_msg,
+        file_size,
+    }
+}
+
+/// Check if two paths are the same (accounting for symlinks).
+fn same_path(a: &str, b: &str) -> bool {
+    let path_a = Path::new(a);
+    let path_b = Path::new(b);
+    
+    if path_a == path_b {
+        return true;
+    }
+    
+    // Try canonicalize for symlink resolution
+    if let (Ok(canon_a), Ok(canon_b)) = (path_a.canonicalize(), path_b.canonicalize()) {
+        return canon_a == canon_b;
+    }
+    
+    false
 }
 
 #[cfg(test)]
@@ -1565,5 +1999,35 @@ mod tests {
     fn classifies_lowercase_cancel_prompt_as_input() {
         let content = "\n• Approval needed\nPress Enter to confirm or Esc to cancel\n";
         assert_eq!(classify_pane_content(content), SessionStatus::Input);
+    }
+
+    #[test]
+    fn classifies_pi_command_as_pi() {
+        assert_eq!(classify_pane_process("pi", None), Some("pi"));
+    }
+
+    #[test]
+    fn classifies_node_wrapped_pi_as_pi() {
+        assert_eq!(
+            classify_pane_process(
+                "node",
+                Some("node /Users/jcjustin/.nvm/versions/node/v22.22.0/bin/pi --no-session")
+            ),
+            Some("pi")
+        );
+    }
+
+    #[test]
+    fn classifies_pi_working_status_bar_as_working() {
+        // Pi shows "Working... (Ctrl+C to interrupt)" with Braille spinner
+        let content = "\n⠋ Working... (Ctrl+C to interrupt)\n\n› Explain this codebase\n";
+        assert_eq!(classify_pane_content(content), SessionStatus::Working);
+    }
+
+    #[test]
+    fn classifies_braille_spinner_as_working() {
+        // Pi uses Braille patterns as spinner with "..."
+        let content = "⠋ Thinking...\n";
+        assert_eq!(classify_pane_content(content), SessionStatus::Working);
     }
 }

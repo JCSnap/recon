@@ -97,6 +97,15 @@ impl App {
             }
         }
 
+        // Also trigger fetch for pi if installed
+        if crate::tmux::is_installed("pi") {
+            if active.contains("pi") {
+                usage::trigger_fetch("pi");
+            } else {
+                deferred.push("pi".to_string());
+            }
+        }
+
         if !deferred.is_empty() {
             std::thread::spawn(move || {
                 std::thread::sleep(std::time::Duration::from_secs(10));
@@ -309,6 +318,7 @@ impl App {
                 serde_json::json!({
                     "index": i + 1,
                     "session_id": s.session_id,
+                    "agent": s.agent,
                     "project_name": s.project_name,
                     "branch": s.branch,
                     "cwd": s.cwd,

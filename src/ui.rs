@@ -236,14 +236,13 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
     let claude_ok = tmux::is_installed("claude");
     let codex_ok = tmux::is_installed("codex");
     let gemini_ok = tmux::is_installed("gemini");
-    let opencode_ok = tmux::is_installed("opencode");
 
     let mut spans: Vec<Span> = Vec::new();
     spans.extend(fmt_agent("claude", "cc1", claude_ok));
     spans.extend(fmt_agent("claude-2", "cc2", claude_ok));
     spans.extend(fmt_agent("codex", "codex", codex_ok));
     spans.extend(fmt_agent("gemini", "gemini", gemini_ok));
-    spans.extend(fmt_agent("opencode", "opencode", opencode_ok));
+    // Note: opencode and pi don't have rate limit usage tracking via CLI
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
@@ -273,6 +272,7 @@ fn agent_display_name(agent: &str) -> &'static str {
         "codex" => "codex",
         "gemini" => "gem",
         "opencode" => "opencode",
+        "pi" => "pi",
         _ => "?",
     }
 }
@@ -283,6 +283,7 @@ fn agent_color(agent: &str) -> Color {
         "codex" => Color::Rgb(110, 200, 120),              // green
         "gemini" => Color::Rgb(100, 150, 255),             // blue
         "opencode" => Color::Rgb(180, 100, 255),           // purple
+        "pi" => Color::Rgb(255, 100, 100),                 // red/pink
         _ => Color::DarkGray,
     }
 }

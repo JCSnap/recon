@@ -84,7 +84,8 @@ fn fetch(account: &str) -> Option<UsageInfo> {
     match account {
         "codex" => fetch_codex(),
         "gemini" => fetch_gemini(),
-        _ => fetch_claude(account), // "claude" or "claude-2"
+        "claude" | "claude-2" => fetch_claude(account),
+        _ => None, // opencode, pi, and others don't have usage limits via CLI
     }
 }
 
@@ -503,7 +504,6 @@ fn extract_text_after_percent(s: &str) -> Option<String> {
     let mut after_pos: Option<usize> = None;
     while i < bytes.len() {
         if bytes[i].is_ascii_digit() {
-            let start = i;
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
