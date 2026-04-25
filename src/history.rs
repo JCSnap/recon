@@ -191,10 +191,12 @@ pub fn run_resume_picker() -> io::Result<Option<(String, String)>> {
                             .map(|m| model::display_name(m).to_string())
                             .unwrap_or_else(|| "—".to_string());
 
+                        // History only scans ~/.claude/projects (cc1, Pro plan),
+                        // so the Max-only 1M Opus default doesn't apply here.
                         let window = e
                             .model
                             .as_deref()
-                            .map(model::context_window)
+                            .map(|m| model::context_window(m, false))
                             .unwrap_or(200_000);
                         let tokens = format!(
                             "{}k / {}",

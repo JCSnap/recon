@@ -15,10 +15,13 @@ pub fn display_name(model_id: &str) -> &str {
 }
 
 /// Context window size for a given model ID.
-/// A bare ID means the 200k default flavor; "[1m]" means the 1M flavor.
-pub fn context_window(model_id: &str) -> u64 {
+/// "[1m]" means the 1M flavor unconditionally. For a bare Opus ID with no
+/// flavor suffix in JSONL, fall back to 1M when the account is on a plan
+/// that defaults Opus to 1M (Max); otherwise 200k.
+pub fn context_window(model_id: &str, plan_default_1m: bool) -> u64 {
     match model_id {
         "claude-opus-4-7[1m]" | "claude-opus-4-6[1m]" => 1_000_000,
+        "claude-opus-4-7" | "claude-opus-4-6" if plan_default_1m => 1_000_000,
         _ => 200_000,
     }
 }

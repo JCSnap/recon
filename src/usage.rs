@@ -154,7 +154,7 @@ fn discover_cc2_keychain_entry() -> Option<String> {
     found
 }
 
-fn read_oauth_token(entry: &str) -> Option<String> {
+fn read_keychain_blob(entry: &str) -> Option<serde_json::Value> {
     let out = Command::new("security")
         .args(["find-generic-password", "-s", entry, "-w"])
         .output()
@@ -163,11 +163,35 @@ fn read_oauth_token(entry: &str) -> Option<String> {
         return None;
     }
     let blob = String::from_utf8_lossy(&out.stdout);
-    let v: serde_json::Value = serde_json::from_str(blob.trim()).ok()?;
-    v.get("claudeAiOauth")?
+    serde_json::from_str(blob.trim()).ok()
+}
+
+fn read_oauth_token(entry: &str) -> Option<String> {
+    read_keychain_blob(entry)?
+        .get("claudeAiOauth")?
         .get("accessToken")?
         .as_str()
         .map(String::from)
+}
+
+/// Cached subscription type ("pro", "max", "free", …) for a Claude account.
+/// Reads from the same Keychain blob as the OAuth token, once per process.
+static SUBSCRIPTION_CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+
+pub fn subscription_type(account: &str) -> Option<String> {
+    let cache = SUBSCRIPTION_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(c) = cache.lock() {
+        if let Some(v) = c.get(account) {
+            return v.clone();
+        }
+    }
+    let entry = claude_keychain_entry(account)?;
+    let result = read_keychain_blob(&entry)
+        .and_then(|v| v.get("claudeAiOauth")?.get("subscriptionType")?.as_str().map(String::from));
+    if let Ok(mut c) = cache.lock() {
+        c.insert(account.to_string(), result.clone());
+    }
+    result
 }
 
 fn fetch_claude(account: &str) -> Option<UsageInfo> {

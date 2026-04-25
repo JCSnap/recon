@@ -58,23 +58,25 @@ impl Session {
         }
     }
 
+    fn context_window(&self) -> u64 {
+        let plan_1m = matches!(
+            crate::usage::subscription_type(&self.agent).as_deref(),
+            Some("max")
+        );
+        self.model
+            .as_deref()
+            .map(|m| model::context_window(m, plan_1m))
+            .unwrap_or(200_000)
+    }
+
     pub fn token_display(&self) -> String {
         let used = self.total_input_tokens + self.total_output_tokens;
-        let window = self
-            .model
-            .as_deref()
-            .map(model::context_window)
-            .unwrap_or(200_000);
-        format!("{}k / {}", used / 1000, format_window(window))
+        format!("{}k / {}", used / 1000, format_window(self.context_window()))
     }
 
     pub fn token_ratio(&self) -> f64 {
         let used = self.total_input_tokens + self.total_output_tokens;
-        let window = self
-            .model
-            .as_deref()
-            .map(model::context_window)
-            .unwrap_or(200_000);
+        let window = self.context_window();
         if window == 0 {
             return 0.0;
         }
