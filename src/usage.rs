@@ -114,16 +114,44 @@ fn tmux_capture(session: &str) -> Option<String> {
 // ── Claude / Claude-2 ─────────────────────────────────────────────────────────
 
 /// macOS Keychain entry name for a given Claude account.
-/// cc2's suffix is account-specific; override via RECON_CC2_KEYCHAIN if needed.
+/// cc2 is auto-discovered from the keychain (the unique
+/// "Claude Code-credentials-<hex>" entry); override with
+/// RECON_CC2_KEYCHAIN if multiple non-default accounts exist.
 fn claude_keychain_entry(account: &str) -> Option<String> {
     match account {
         "claude" => Some("Claude Code-credentials".to_string()),
-        "claude-2" => Some(
-            std::env::var("RECON_CC2_KEYCHAIN")
-                .unwrap_or_else(|_| "Claude Code-credentials-950212fc".to_string()),
-        ),
+        "claude-2" => std::env::var("RECON_CC2_KEYCHAIN")
+            .ok()
+            .or_else(discover_cc2_keychain_entry),
         _ => None,
     }
+}
+
+/// Scan `security dump-keychain` for the unique
+/// "Claude Code-credentials-<hex>" entry that backs a non-default
+/// CLAUDE_CONFIG_DIR. Returns None if zero or multiple are found.
+fn discover_cc2_keychain_entry() -> Option<String> {
+    let out = Command::new("security").arg("dump-keychain").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    const PREFIX: &str = "\"Claude Code-credentials-";
+
+    let mut found: Option<String> = None;
+    for line in text.lines() {
+        let Some(start) = line.find(PREFIX) else { continue };
+        let rest = &line[start + 1..]; // skip leading quote
+        let Some(end) = rest.find('"') else { continue };
+        let entry = &rest[..end];
+        let suffix = &entry["Claude Code-credentials-".len()..];
+        if suffix.is_empty() || !suffix.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        match &found {
+            Some(prev) if prev != entry => return None, // ambiguous — bail
+            None => found = Some(entry.to_string()),
+            _ => {}
+        }
+    }
+    found
 }
 
 fn read_oauth_token(entry: &str) -> Option<String> {
