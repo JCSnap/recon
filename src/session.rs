@@ -770,7 +770,14 @@ fn parse_jsonl(
                 }
                 if let Some(msg) = entry.message {
                     if let Some(m) = msg.model {
-                        model = Some(m);
+                        // Preserve a flavored ID (e.g. "claude-opus-4-7[1m]") that
+                        // /model parsing already set — assistant messages always
+                        // carry the bare base ID, which would otherwise downgrade it.
+                        let preserve = matches!(&model, Some(curr)
+                            if curr.starts_with(&m) && curr.len() > m.len());
+                        if !preserve {
+                            model = Some(m);
+                        }
                     }
                     if let Some(usage) = msg.usage {
                         total_input = usage.input_tokens
@@ -830,14 +837,12 @@ fn parse_jsonl(
                     effort = Some(e);
                 }
 
-                // Extract model: strip suffixes like "(1M context)" and "(default)"
+                // Strip only the "(default)" marker — keep the "(1M context)" /
+                // "(200k context)" suffix so id_from_display_name can map it to
+                // the correct flavored ID (e.g. "claude-opus-4-7[1m]").
                 let model_name = model_part
                     .trim()
                     .trim_end_matches("(default)")
-                    .trim()
-                    .trim_end_matches("(1M context)")
-                    .trim()
-                    .trim_end_matches("(200k context)")
                     .trim();
                 if let Some(id) = model::id_from_display_name(model_name) {
                     model = Some(id.to_string());
