@@ -51,7 +51,7 @@ pub fn store(account: &str, info: UsageInfo) {
 
 /// Kill any leftover `_recon_usage_*` tmux sessions.
 pub fn cleanup() {
-    for suffix in &["claude", "claude_2", "codex", "gemini"] {
+    for suffix in &["codex", "gemini"] {
         let session_name = format!("_recon_usage_{}", suffix);
         tmux_kill(&session_name);
     }
@@ -113,74 +113,80 @@ fn tmux_capture(session: &str) -> Option<String> {
 
 // ── Claude / Claude-2 ─────────────────────────────────────────────────────────
 
+/// macOS Keychain entry name for a given Claude account.
+/// cc2's suffix is account-specific; override via RECON_CC2_KEYCHAIN if needed.
+fn claude_keychain_entry(account: &str) -> Option<String> {
+    match account {
+        "claude" => Some("Claude Code-credentials".to_string()),
+        "claude-2" => Some(
+            std::env::var("RECON_CC2_KEYCHAIN")
+                .unwrap_or_else(|_| "Claude Code-credentials-950212fc".to_string()),
+        ),
+        _ => None,
+    }
+}
+
+fn read_oauth_token(entry: &str) -> Option<String> {
+    let out = Command::new("security")
+        .args(["find-generic-password", "-s", entry, "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let blob = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(blob.trim()).ok()?;
+    v.get("claudeAiOauth")?
+        .get("accessToken")?
+        .as_str()
+        .map(String::from)
+}
+
 fn fetch_claude(account: &str) -> Option<UsageInfo> {
-    let session_name = format!("_recon_usage_{}", account.replace('-', "_"));
-    tmux_kill(&session_name);
+    let entry = claude_keychain_entry(account)?;
+    let token = read_oauth_token(&entry)?;
 
-    let mut args: Vec<String> = vec![
-        "new-session".into(),
-        "-d".into(),
-        "-s".into(),
-        session_name.clone(),
-        "-c".into(),
-        "/tmp".into(),
-    ];
-    if account == "claude-2" {
-        if let Some(home) = dirs::home_dir() {
-            args.push("-e".into());
-            args.push(format!(
-                "CLAUDE_CONFIG_DIR={}",
-                home.join(".claude-2").display()
-            ));
-        }
-    }
-    args.push("claude".into());
-    args.push("--dangerously-skip-permissions".into());
-
-    let ok = Command::new("tmux")
-        .args(&args)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok {
+    let out = Command::new("curl")
+        .args([
+            "-sS",
+            "--max-time",
+            "5",
+            "-H",
+            "Accept: application/json",
+            "-H",
+            &format!("Authorization: Bearer {token}"),
+            "-H",
+            "anthropic-beta: oauth-2025-04-20",
+            "https://api.anthropic.com/api/oauth/usage",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
         return None;
     }
 
-    // Wait for main UI ready or trust prompt.
-    let ready = wait_for_either(
-        &session_name,
-        "bypass permissions on",
-        "trust this folder",
-        20,
-    );
-    match ready {
-        Some(1) => {}
-        Some(2) => {
-            tmux_send(&session_name, &["", "Enter"]);
-            if !wait_for_pane(&session_name, "bypass permissions on", 15) {
-                tmux_kill(&session_name);
-                return None;
-            }
-        }
-        _ => {
-            tmux_kill(&session_name);
-            return None;
-        }
-    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
 
-    tmux_send(&session_name, &["/usage", "Enter"]);
+    let pct = |key: &str| -> Option<u32> {
+        v.get(key)?
+            .get("utilization")?
+            .as_f64()
+            .map(|f| f.floor() as u32)
+    };
+    let resets = |key: &str| -> Option<String> {
+        v.get(key)?.get("resets_at")?.as_str().map(String::from)
+    };
 
-    // Poll for the usage output to appear instead of a fixed sleep.
-    if !wait_for_pane(&session_name, "% used", 10) {
-        tmux_kill(&session_name);
+    let info = UsageInfo {
+        five_hour_pct: pct("five_hour"),
+        resets_at: resets("five_hour"),
+        weekly_pct: pct("seven_day"),
+        weekly_resets_at: resets("seven_day"),
+    };
+    if info.five_hour_pct.is_none() && info.weekly_pct.is_none() {
         return None;
     }
-    // Small settle delay so the full output (including "Resets") renders.
-    thread::sleep(Duration::from_millis(500));
-
-    let content = tmux_capture(&session_name)?;
-    tmux_kill(&session_name);
-    parse_claude_output(&content)
+    Some(info)
 }
 
 // ── Codex ─────────────────────────────────────────────────────────────────────
@@ -360,43 +366,6 @@ fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
 }
 
 // ── Parsers ───────────────────────────────────────────────────────────────────
-
-fn parse_claude_output(content: &str) -> Option<UsageInfo> {
-    let mut five_hour_pct = None;
-    let mut resets_at = None;
-
-    for line in content.lines() {
-        let clean = strip_ansi(line.trim());
-
-        // Take the FIRST "XX% used" line (current session, not extra usage).
-        if five_hour_pct.is_none() && (clean.contains("% used") || clean.contains("%\u{a0}used")) {
-            if let Some(pct) = extract_percent(&clean) {
-                five_hour_pct = Some(pct);
-            }
-        }
-
-        // Take the FIRST "Resets ..." line that isn't a billing line.
-        if resets_at.is_none() && !clean.contains('$') {
-            if let Some(pos) = clean.find("Resets ") {
-                let after = clean[pos + "Resets ".len()..].trim().to_string();
-                if !after.is_empty() {
-                    resets_at = Some(after);
-                }
-            }
-        }
-    }
-
-    if five_hour_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo {
-            five_hour_pct,
-            resets_at,
-            weekly_pct: None,
-            weekly_resets_at: None,
-        })
-    } else {
-        None
-    }
-}
 
 fn parse_codex_output(content: &str) -> Option<UsageInfo> {
     // Parse the "5h limit" and "Weekly limit" lines from /status output.
