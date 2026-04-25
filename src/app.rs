@@ -334,6 +334,7 @@ impl App {
                     "status": s.status.label(),
                     "pid": s.pid,
                     "last_activity": s.last_activity,
+                    "last_user_activity": s.last_user_activity,
                     "started_at": s.started_at,
                 })
             })

@@ -252,7 +252,10 @@ struct Room {
     name: String,
     session_indices: Vec<usize>,
     has_input: bool,
-    last_activity: Option<String>,
+    /// Most recent *user* activity timestamp across the room's sessions.
+    /// See Session::last_user_activity — sorting on this keeps idle rooms
+    /// stable even as Claude Code writes background entries to JSONL.
+    last_user_activity: Option<String>,
 }
 
 fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
@@ -273,16 +276,16 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
             let has_input = indices
                 .iter()
                 .any(|&i| sessions[i].status == SessionStatus::Input);
-            let last_activity = indices
+            let last_user_activity = indices
                 .iter()
-                .filter_map(|&i| sessions[i].last_activity.as_ref())
+                .filter_map(|&i| sessions[i].last_user_activity.as_ref())
                 .max()
                 .cloned();
             Room {
                 name,
                 session_indices: indices,
                 has_input,
-                last_activity,
+                last_user_activity,
             }
         })
         .collect();
@@ -290,7 +293,7 @@ fn group_into_rooms(sessions: &[Session]) -> Vec<Room> {
     rooms.sort_by(|a, b| {
         b.has_input
             .cmp(&a.has_input)
-            .then_with(|| b.last_activity.cmp(&a.last_activity))
+            .then_with(|| b.last_user_activity.cmp(&a.last_user_activity))
     });
 
     rooms
@@ -692,6 +695,10 @@ mod tests {
     use std::path::PathBuf;
 
     fn make_session(cwd: &str, status: SessionStatus, last_activity: Option<&str>) -> Session {
+        // Sort tests use this single timestamp for both last_activity (general
+        // freshness) and last_user_activity (sort key). They behave identically
+        // in tests where we only populate via this helper.
+        let ts = last_activity.map(|s| s.to_string());
         Session {
             session_id: String::new(),
             project_name: cwd.to_string(),
@@ -703,12 +710,13 @@ mod tests {
             agent: String::new(),
             model: None,
             last_user_msg: None,
+            last_user_activity: ts.clone(),
             effort: None,
             total_input_tokens: 0,
             total_output_tokens: 0,
             status,
             pid: None,
-            last_activity: last_activity.map(|s| s.to_string()),
+            last_activity: ts,
             started_at: 0,
             jsonl_path: PathBuf::new(),
             last_file_size: 0,

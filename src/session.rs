@@ -39,6 +39,11 @@ pub struct Session {
     pub agent: String,
     pub model: Option<String>,
     pub last_user_msg: Option<String>,
+    /// Timestamp of the last *real* user message (non-meta, with extractable
+    /// text). Drives sort order so that background JSONL writes — hooks,
+    /// file-history snapshots, async tool results — don't reshuffle inactive
+    /// sessions in the table and tamagotchi views.
+    pub last_user_activity: Option<String>,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub status: SessionStatus,
@@ -195,6 +200,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                                 prev.and_then(|s| s.effort.clone()),
                                 prev.and_then(|s| s.last_activity.clone()),
                                 prev.and_then(|s| s.last_user_msg.clone()),
+                                prev.and_then(|s| s.last_user_activity.clone()),
                             );
                             let cwd = info
                                 .cwd
@@ -210,6 +216,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                             existing.total_output_tokens = info.output_tokens;
                             existing.last_activity = info.last_activity;
                             existing.last_user_msg = info.last_user_msg;
+                            existing.last_user_activity = info.last_user_activity;
                             existing.jsonl_path = path;
                             existing.last_file_size = info.file_size;
                         }
@@ -228,6 +235,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                     prev.and_then(|s| s.effort.clone()),
                     prev.and_then(|s| s.last_activity.clone()),
                     prev.and_then(|s| s.last_user_msg.clone()),
+                    prev.and_then(|s| s.last_user_activity.clone()),
                 );
 
                 let cwd = info
@@ -255,6 +263,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                     agent: detect_agent(&live.tmux_session),
                     model: info.model,
                     last_user_msg: info.last_user_msg,
+                    last_user_activity: info.last_user_activity,
                     effort: info.effort,
                     total_input_tokens: info.input_tokens,
                     total_output_tokens: info.output_tokens,
@@ -331,6 +340,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 prev.and_then(|s| s.effort.clone()),
                 prev.and_then(|s| s.last_activity.clone()),
                 prev.and_then(|s| s.last_user_msg.clone()),
+                prev.and_then(|s| s.last_user_activity.clone()),
             );
 
             let cwd = info.cwd.clone().unwrap_or_else(|| live.pane_cwd.clone());
@@ -354,6 +364,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 agent: detect_agent(&live.tmux_session),
                 model: info.model,
                 last_user_msg: info.last_user_msg,
+                last_user_activity: info.last_user_activity,
                 effort: info.effort,
                 total_input_tokens: info.input_tokens,
                 total_output_tokens: info.output_tokens,
@@ -382,6 +393,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
                 agent: detect_agent(&live.tmux_session),
                 model: None,
                 last_user_msg: None,
+                last_user_activity: None,
                 effort: None,
                 total_input_tokens: 0,
                 total_output_tokens: 0,
@@ -403,7 +415,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         if let Some(newer) =
             find_clear_successor(&session.cwd, &matched_session_ids, &session.jsonl_path)
         {
-            let info = parse_jsonl(&newer, 0, 0, 0, None, None, None, None);
+            let info = parse_jsonl(&newer, 0, 0, 0, None, None, None, None, None);
             let new_sid = newer
                 .file_stem()
                 .map(|s| s.to_string_lossy().to_string())
@@ -415,6 +427,7 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             session.model = info.model;
             session.effort = info.effort;
             session.last_activity = info.last_activity;
+            session.last_user_activity = info.last_user_activity;
             session.last_file_size = info.file_size;
             session.jsonl_path = newer;
             if let Some(cwd) = info.cwd {
@@ -423,7 +436,11 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
         }
     }
 
-    // Sort: tagged sessions first (alphanumeric by tag), then untagged by most recent activity.
+    // Sort: tagged sessions first (alphanumeric by tag), then untagged by
+    // most recent *user* activity. Using last_user_activity (gated on real,
+    // non-meta user messages with text) rather than last_activity (which is
+    // bumped by every JSONL write — hooks, file-history snapshots, async
+    // tool results) keeps inactive sessions from reshuffling their position.
     sessions.sort_by(|a, b| {
         match (&a.tag, &b.tag) {
             (Some(ta), Some(tb)) => {
@@ -436,8 +453,8 @@ pub fn discover_sessions(prev_sessions: &HashMap<String, Session>) -> Vec<Sessio
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => b
-                .last_activity
-                .cmp(&a.last_activity)
+                .last_user_activity
+                .cmp(&a.last_user_activity)
                 .then(b.started_at.cmp(&a.started_at)),
         }
     });
@@ -499,6 +516,7 @@ struct ParsedInfo {
     cwd: Option<String>,
     last_activity: Option<String>,
     last_user_msg: Option<String>,
+    last_user_activity: Option<String>,
     file_size: u64,
 }
 
@@ -692,6 +710,7 @@ fn parse_jsonl(
     prev_effort: Option<String>,
     prev_activity: Option<String>,
     prev_last_user_msg: Option<String>,
+    prev_last_user_activity: Option<String>,
 ) -> ParsedInfo {
     let file = match fs::File::open(path) {
         Ok(f) => f,
@@ -704,6 +723,7 @@ fn parse_jsonl(
                 cwd: None,
                 last_activity: prev_activity,
                 last_user_msg: prev_last_user_msg,
+                last_user_activity: prev_last_user_activity,
                 file_size: 0,
             }
         }
@@ -720,6 +740,7 @@ fn parse_jsonl(
             cwd: None,
             last_activity: prev_activity,
             last_user_msg: prev_last_user_msg,
+            last_user_activity: prev_last_user_activity,
             file_size,
         };
     }
@@ -731,6 +752,7 @@ fn parse_jsonl(
     let mut effort = prev_effort;
     let mut last_activity = prev_activity;
     let mut last_user_msg = prev_last_user_msg;
+    let mut last_user_activity = prev_last_user_activity;
     let mut cwd = None;
 
     if prev_file_size > 0 {
@@ -742,6 +764,7 @@ fn parse_jsonl(
         effort = None;
         last_activity = None;
         last_user_msg = None;
+        last_user_activity = None;
     }
 
     let mut line = String::new();
@@ -791,8 +814,9 @@ fn parse_jsonl(
             }
         } else if trimmed.contains("\"type\":\"user\"") || trimmed.contains("\"type\":\"system\"") {
             if let Ok(entry) = serde_json::from_str::<JsonlEntry>(trimmed) {
-                if let Some(ts) = entry.timestamp {
-                    last_activity = Some(ts);
+                let ts = entry.timestamp.clone();
+                if let Some(ref t) = ts {
+                    last_activity = Some(t.clone());
                 }
                 if entry.cwd.is_some() {
                     cwd = entry.cwd;
@@ -802,6 +826,12 @@ fn parse_jsonl(
                         if let Some(content) = msg.content {
                             if let Some(text) = extract_user_text(&content) {
                                 last_user_msg = Some(text);
+                                // Capture the timestamp here, gated behind the
+                                // same predicates as last_user_msg, so sort
+                                // order only advances on real user input.
+                                if let Some(t) = ts {
+                                    last_user_activity = Some(t);
+                                }
                             }
                         }
                     }
@@ -861,6 +891,7 @@ fn parse_jsonl(
         cwd,
         last_activity,
         last_user_msg,
+        last_user_activity,
         file_size,
     }
 }
@@ -1708,6 +1739,7 @@ fn discover_pi_sessions(
                 agent: "pi".to_string(),
                 model: info.model,
                 last_user_msg: info.last_user_msg,
+                last_user_activity: info.last_user_activity,
                 effort: None, // Pi doesn't have effort levels
                 total_input_tokens: info.input_tokens,
                 total_output_tokens: info.output_tokens,
@@ -1750,6 +1782,7 @@ fn discover_pi_sessions(
             agent: "pi".to_string(),
             model: None,
             last_user_msg: None,
+            last_user_activity: None,
             effort: None,
             total_input_tokens: 0,
             total_output_tokens: 0,
@@ -1819,6 +1852,7 @@ fn parse_pi_jsonl(
                 cwd: None,
                 last_activity: prev_activity,
                 last_user_msg: None,
+                last_user_activity: None,
                 file_size: 0,
             }
         }
@@ -1835,6 +1869,7 @@ fn parse_pi_jsonl(
             cwd: None,
             last_activity: prev_activity,
             last_user_msg: None,
+            last_user_activity: None,
             file_size,
         };
     }
@@ -1925,6 +1960,7 @@ fn parse_pi_jsonl(
         cwd: None,
         last_activity,
         last_user_msg,
+        last_user_activity: None,
         file_size,
     }
 }
