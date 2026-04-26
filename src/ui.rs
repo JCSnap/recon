@@ -14,7 +14,7 @@ use crate::usage;
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Min(1),
-        Constraint::Length(1),
+        Constraint::Length(2),
         Constraint::Length(1),
     ])
     .split(frame.area());
@@ -191,8 +191,18 @@ fn render_table(frame: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+#[derive(Clone, Copy)]
+enum LimitKind {
+    Session,
+    Weekly,
+}
+
 pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout::Rect) {
-    let fmt_agent = |label: &str, display: &str, available: bool| -> Vec<Span<'static>> {
+    let fmt_agent = |label: &str,
+                     display: &str,
+                     available: bool,
+                     kind: LimitKind|
+     -> Vec<Span<'static>> {
         if !available {
             return vec![
                 Span::styled(display.to_string(), Style::default().fg(Color::DarkGray)),
@@ -204,8 +214,11 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
 
         let detail = match usage::get(label) {
             Some(info) => {
-                let pct_part = info
-                    .effective_pct()
+                let (pct, resets) = match kind {
+                    LimitKind::Session => (info.five_hour_pct, info.resets_at.as_deref()),
+                    LimitKind::Weekly => (info.weekly_pct, info.weekly_resets_at.as_deref()),
+                };
+                let pct_part = pct
                     .map(|p| {
                         let hint = if p >= 90 {
                             "!"
@@ -216,10 +229,9 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
                         };
                         format!("{hint}{p}%")
                     })
-                    .unwrap_or_else(|| "?%".to_string());
-                let reset_part = info
-                    .effective_resets_at()
-                    .map(|r| format!(" resets {r}"))
+                    .unwrap_or_else(|| "—".to_string());
+                let reset_part = resets
+                    .map(|r| format!(" resets {}", format_reset(r)))
                     .unwrap_or_default();
                 format!(": {pct_part}{reset_part}  ")
             }
@@ -237,14 +249,47 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
     let codex_ok = tmux::is_installed("codex");
     let gemini_ok = tmux::is_installed("gemini");
 
-    let mut spans: Vec<Span> = Vec::new();
-    spans.extend(fmt_agent("claude", "cc1", claude_ok));
-    spans.extend(fmt_agent("claude-2", "cc2", claude_ok));
-    spans.extend(fmt_agent("codex", "codex", codex_ok));
-    spans.extend(fmt_agent("gemini", "gemini", gemini_ok));
-    // Note: opencode and pi don't have rate limit usage tracking via CLI
+    let label_style = Style::default()
+        .fg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD);
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    let mut session_spans: Vec<Span> = vec![Span::styled("Session  ", label_style)];
+    session_spans.extend(fmt_agent("claude", "cc1", claude_ok, LimitKind::Session));
+    session_spans.extend(fmt_agent("claude-2", "cc2", claude_ok, LimitKind::Session));
+    session_spans.extend(fmt_agent("codex", "codex", codex_ok, LimitKind::Session));
+    session_spans.extend(fmt_agent("gemini", "gemini", gemini_ok, LimitKind::Session));
+
+    let mut weekly_spans: Vec<Span> = vec![Span::styled("Weekly   ", label_style)];
+    weekly_spans.extend(fmt_agent("claude", "cc1", claude_ok, LimitKind::Weekly));
+    weekly_spans.extend(fmt_agent("claude-2", "cc2", claude_ok, LimitKind::Weekly));
+
+    let rows = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(area);
+    frame.render_widget(Paragraph::new(Line::from(session_spans)), rows[0]);
+    frame.render_widget(Paragraph::new(Line::from(weekly_spans)), rows[1]);
+}
+
+/// Format a reset timestamp like "2026-04-26T12:00:01.010007+00:00" as
+/// "2026-04-26 12pm" (or "2026-04-26 12:30pm" when minutes are non-zero), in local time.
+fn format_reset(ts: &str) -> String {
+    use chrono::{DateTime, Local, Timelike, Utc};
+
+    let Ok(dt) = ts.parse::<DateTime<Utc>>() else {
+        return ts.to_string();
+    };
+    let local = dt.with_timezone(&Local);
+    let hour24 = local.hour();
+    let minute = local.minute();
+    let suffix = if hour24 < 12 { "am" } else { "pm" };
+    let hour12 = match hour24 % 12 {
+        0 => 12,
+        h => h,
+    };
+    let date = local.format("%Y-%m-%d");
+    if minute == 0 {
+        format!("{date} {hour12}{suffix}")
+    } else {
+        format!("{date} {hour12}:{minute:02}{suffix}")
+    }
 }
 
 fn render_footer(frame: &mut Frame, area: ratatui::layout::Rect) {

@@ -382,7 +382,7 @@ pub fn resolve_zoom(app: &mut App) {
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::vertical([
         Constraint::Min(1),
-        Constraint::Length(1), // account stats
+        Constraint::Length(2), // account stats (session + weekly)
         Constraint::Length(1), // footer
     ])
     .split(frame.area());
