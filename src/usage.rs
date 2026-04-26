@@ -51,7 +51,7 @@ pub fn store(account: &str, info: UsageInfo) {
 
 /// Kill any leftover `_recon_usage_*` tmux sessions.
 pub fn cleanup() {
-    for suffix in &["codex", "gemini"] {
+    for suffix in &["gemini"] {
         let session_name = format!("_recon_usage_{}", suffix);
         tmux_kill(&session_name);
     }
@@ -243,70 +243,66 @@ fn fetch_claude(account: &str) -> Option<UsageInfo> {
 
 // ── Codex ─────────────────────────────────────────────────────────────────────
 
+/// Fetch Codex rate-limit usage via the same OAuth-protected endpoint that the
+/// TUI status line uses (`https://chatgpt.com/backend-api/wham/usage`).
+/// Reads OAuth credentials from `~/.codex/auth.json`.
 fn fetch_codex() -> Option<UsageInfo> {
-    let session_name = "_recon_usage_codex";
-    tmux_kill(session_name);
+    let auth_path = dirs::home_dir()?.join(".codex/auth.json");
+    let blob = std::fs::read_to_string(&auth_path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&blob).ok()?;
+    let access_token = v.get("tokens")?.get("access_token")?.as_str()?;
+    let account_id = v
+        .get("tokens")
+        .and_then(|t| t.get("account_id"))
+        .and_then(|a| a.as_str())
+        .unwrap_or("");
 
-    let ok = Command::new("tmux")
-        .args([
-            "new-session",
-            "-d",
-            "-s",
-            session_name,
-            "-x",
-            "120",
-            "-y",
-            "40",
-            "-c",
-            "/tmp",
-            "codex",
-            "--full-auto",
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if !ok {
+    let mut args = vec![
+        "-sS".to_string(),
+        "--max-time".to_string(),
+        "5".to_string(),
+        "-H".to_string(),
+        "Accept: application/json".to_string(),
+        "-H".to_string(),
+        format!("Authorization: Bearer {access_token}"),
+        "-H".to_string(),
+        "User-Agent: codex-cli/0.0.0".to_string(),
+    ];
+    if !account_id.is_empty() {
+        args.push("-H".to_string());
+        args.push(format!("ChatGPT-Account-Id: {account_id}"));
+    }
+    args.push("https://chatgpt.com/backend-api/wham/usage".to_string());
+
+    let out = Command::new("curl").args(&args).output().ok()?;
+    if !out.status.success() {
         return None;
     }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let rl = v.get("rate_limit")?;
 
-    // Wait for status bar ("% left") or trust prompt ("do you trust").
-    let ready = wait_for_either(session_name, "% left", "do you trust", 20);
-    match ready {
-        Some(1) => {}
-        Some(2) => {
-            // Accept trust prompt (option 1 is default — just press Enter).
-            tmux_send(session_name, &["", "Enter"]);
-            if !wait_for_pane(session_name, "% left", 15) {
-                tmux_kill(session_name);
-                return None;
-            }
-        }
-        _ => {
-            tmux_kill(session_name);
-            return None;
-        }
+    let pct = |window: &str| -> Option<u32> {
+        rl.get(window)?
+            .get("used_percent")?
+            .as_f64()
+            .map(|f| f.floor() as u32)
+    };
+    let resets = |window: &str| -> Option<String> {
+        let secs = rl.get(window)?.get("reset_at")?.as_i64()?;
+        let dt = chrono::DateTime::<chrono::Utc>::from_timestamp(secs, 0)?;
+        Some(dt.to_rfc3339())
+    };
+
+    let info = UsageInfo {
+        five_hour_pct: pct("primary_window"),
+        resets_at: resets("primary_window"),
+        weekly_pct: pct("secondary_window"),
+        weekly_resets_at: resets("secondary_window"),
+    };
+    if info.five_hour_pct.is_none() && info.weekly_pct.is_none() {
+        return None;
     }
-
-    // Send /status to get account-level usage (the status bar only shows session usage).
-    // Type the command, dismiss autocomplete with Escape, then press Enter.
-    tmux_send(session_name, &["/status"]);
-    thread::sleep(Duration::from_millis(500));
-    tmux_send(session_name, &["Escape"]);
-    thread::sleep(Duration::from_millis(300));
-    tmux_send(session_name, &["Enter"]);
-
-    // Poll for the 5h or weekly limit line to appear in the /status output.
-    if wait_for_either(session_name, "5h limit", "weekly limit", 10).is_none() {
-        // Fall back to status bar if /status didn't produce output.
-        let content = tmux_capture(session_name)?;
-        tmux_kill(session_name);
-        return parse_codex_output(&content);
-    }
-    thread::sleep(Duration::from_millis(500));
-
-    let content = tmux_capture(session_name)?;
-    tmux_kill(session_name);
-    parse_codex_output(&content)
+    Some(info)
 }
 
 // ── Gemini ────────────────────────────────────────────────────────────────────
@@ -419,68 +415,6 @@ fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
 
 // ── Parsers ───────────────────────────────────────────────────────────────────
 
-fn parse_codex_output(content: &str) -> Option<UsageInfo> {
-    // Parse the "5h limit" and "Weekly limit" lines from /status output.
-    // e.g. "5h limit:  [...] 86% left (resets 11:31)"
-    //      "Weekly limit:  [...] 82% left (resets 16:27 on 29 Mar)"
-    // Fall back to the status bar "X% left" if /status output isn't present.
-    let mut five_hour_pct = None;
-    let mut resets_at = None;
-    let mut weekly_pct = None;
-    let mut weekly_resets_at = None;
-    let mut fallback_pct = None;
-
-    for line in content.lines() {
-        let clean = strip_ansi(line.trim());
-        let lower = clean.to_lowercase();
-
-        if lower.contains("5h limit") && clean.contains("% left") {
-            if let Some(pct_left) = extract_percent(&clean) {
-                five_hour_pct = Some(100u32.saturating_sub(pct_left));
-            }
-            if let Some(reset) = extract_resets(&clean) {
-                resets_at = Some(reset);
-            }
-        } else if lower.contains("weekly limit") && clean.contains("% left") {
-            if let Some(pct_left) = extract_percent(&clean) {
-                weekly_pct = Some(100u32.saturating_sub(pct_left));
-            }
-            if let Some(reset) = extract_resets(&clean) {
-                weekly_resets_at = Some(reset);
-            }
-        } else if fallback_pct.is_none() && clean.contains("% left") {
-            if let Some(pct_left) = extract_percent(&clean) {
-                fallback_pct = Some(100u32.saturating_sub(pct_left));
-            }
-        }
-    }
-
-    let pct = five_hour_pct.or(fallback_pct);
-    if pct.is_some() || resets_at.is_some() || weekly_pct.is_some() {
-        Some(UsageInfo {
-            five_hour_pct: pct,
-            resets_at,
-            weekly_pct,
-            weekly_resets_at,
-        })
-    } else {
-        None
-    }
-}
-
-/// Extract reset time from a line containing "resets HH:MM" or similar.
-fn extract_resets(clean: &str) -> Option<String> {
-    if let Some(pos) = clean.find("resets ") {
-        let after = &clean[pos + "resets ".len()..];
-        // Trim trailing paren/bracket/box chars.
-        let trimmed = after.trim_end_matches(|c: char| c == ')' || c == '│' || c == ' ');
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    None
-}
-
 fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
     // Parse the /stats model table. Example line (after ANSI strip):
     // "│  gemini-2.5-flash   -   ▬▬▬▬▬▬▬▬   0%  8:19 PM (24h)   │"
@@ -587,76 +521,3 @@ fn strip_ansi(s: &str) -> String {
     out
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_codex_status_output() {
-        let content = r#"
-│  5h limit:             [████████░░░░░░░░░░░░] 42% left (resets 11:31)           │
-│  Weekly limit:         [████████████████░░░░] 82% left (resets 16:27 on 29 Mar) │
-
-  gpt-5.4 medium · 100% left · /private/tmp
-"#;
-        let info = parse_codex_output(content).expect("should parse");
-        // 42% left → 58% used
-        assert_eq!(info.five_hour_pct, Some(58));
-        assert!(info.resets_at.is_some(), "should have resets_at");
-        assert!(
-            info.resets_at.as_ref().unwrap().contains("11:31"),
-            "resets_at should contain 11:31, got: {:?}",
-            info.resets_at
-        );
-        // 82% left → 18% used
-        assert_eq!(info.weekly_pct, Some(18));
-        assert!(
-            info.weekly_resets_at.as_ref().unwrap().contains("16:27"),
-            "weekly_resets_at should contain 16:27, got: {:?}",
-            info.weekly_resets_at
-        );
-        // effective should be max(58, 18) = 58
-        assert_eq!(info.effective_pct(), Some(58));
-    }
-
-    #[test]
-    fn test_parse_codex_status_bar_fallback() {
-        // When /status output isn't present, fall back to status bar.
-        let content = "  gpt-5.4 medium · 100% left · /private/tmp\n";
-        let info = parse_codex_output(content).expect("should parse");
-        // 100% left → 0% used
-        assert_eq!(info.five_hour_pct, Some(0));
-    }
-
-    #[test]
-    fn test_parse_codex_prefers_5h_over_status_bar() {
-        let content = r#"
-│  5h limit:             [████████░░░░░░░░░░░░] 86% left (resets 11:31)           │
-  gpt-5.4 medium · 100% left · /private/tmp
-"#;
-        let info = parse_codex_output(content).expect("should parse");
-        // Should use 5h limit (86% left → 14% used), not status bar (100% left → 0%)
-        assert_eq!(info.five_hour_pct, Some(14));
-    }
-
-    #[test]
-    fn test_parse_codex_weekly_exhausted() {
-        // When weekly limit is exhausted but 5h limit has capacity,
-        // effective_pct should reflect the weekly exhaustion.
-        let content = r#"
-│  5h limit:             [████████████████████] 100% left (resets 16:51)           │
-│  Weekly limit:         [░░░░░░░░░░░░░░░░░░░░] 0% left (resets 16:27 on 29 Mar)  │
-
-  gpt-5.4 medium · 100% left · /private/tmp
-"#;
-        let info = parse_codex_output(content).expect("should parse");
-        // 5h: 100% left → 0% used
-        assert_eq!(info.five_hour_pct, Some(0));
-        // Weekly: 0% left → 100% used
-        assert_eq!(info.weekly_pct, Some(100));
-        // Effective: max(0, 100) = 100
-        assert_eq!(info.effective_pct(), Some(100));
-        // Bottleneck is weekly, so effective reset should be weekly's
-        assert!(info.effective_resets_at().unwrap().contains("16:27"));
-    }
-}
