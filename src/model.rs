@@ -3,6 +3,7 @@
 /// bare IDs are treated as the 200k default.
 pub fn display_name(model_id: &str) -> &str {
     match model_id {
+        "claude-opus-4-8" | "claude-opus-4-8[1m]" => "Opus 4.8",
         "claude-opus-4-7" | "claude-opus-4-7[1m]" => "Opus 4.7",
         "claude-opus-4-6" | "claude-opus-4-6[1m]" => "Opus 4.6",
         "claude-sonnet-4-6" => "Sonnet 4.6",
@@ -20,8 +21,8 @@ pub fn display_name(model_id: &str) -> &str {
 /// that defaults Opus to 1M (Max); otherwise 200k.
 pub fn context_window(model_id: &str, plan_default_1m: bool) -> u64 {
     match model_id {
-        "claude-opus-4-7[1m]" | "claude-opus-4-6[1m]" => 1_000_000,
-        "claude-opus-4-7" | "claude-opus-4-6" if plan_default_1m => 1_000_000,
+        "claude-opus-4-8[1m]" | "claude-opus-4-7[1m]" | "claude-opus-4-6[1m]" => 1_000_000,
+        "claude-opus-4-8" | "claude-opus-4-7" | "claude-opus-4-6" if plan_default_1m => 1_000_000,
         _ => 200_000,
     }
 }
@@ -30,6 +31,9 @@ pub fn context_window(model_id: &str, plan_default_1m: bool) -> u64 {
 /// "(1M context)" / "(200k context)" suffix) → model ID.
 pub fn id_from_display_name(display: &str) -> Option<&'static str> {
     match display.trim() {
+        "Opus 4.8"                  => Some("claude-opus-4-8"),
+        "Opus 4.8 (1M context)"     => Some("claude-opus-4-8[1m]"),
+        "Opus 4.8 (200k context)"   => Some("claude-opus-4-8"),
         "Opus 4.7"                  => Some("claude-opus-4-7"),
         "Opus 4.7 (1M context)"     => Some("claude-opus-4-7[1m]"),
         "Opus 4.7 (200k context)"   => Some("claude-opus-4-7"),
