@@ -52,7 +52,7 @@ impl Agent {
         match self {
             Agent::Claude1 | Agent::Claude2 => "claude",
             Agent::Codex => "codex",
-            Agent::Gemini => "gemini",
+            Agent::Gemini => "agy",
             Agent::Opencode => "opencode",
             Agent::Pi => "pi",
         }
@@ -81,8 +81,8 @@ impl Agent {
                 (path, &["--sandbox", "danger-full-access"], None)
             }
             Agent::Gemini => {
-                let path = which_tool("gemini").unwrap_or_else(|| "gemini".to_string());
-                (path, &["-y"], None)
+                let path = which_tool("agy").unwrap_or_else(|| "agy".to_string());
+                (path, &["--dangerously-skip-permissions"], None)
             }
             Agent::Opencode => {
                 let path = which_tool("opencode").unwrap_or_else(|| "opencode".to_string());

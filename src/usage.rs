@@ -319,8 +319,8 @@ fn fetch_gemini() -> Option<UsageInfo> {
             session_name,
             "-c",
             "/tmp",
-            "gemini",
-            "-y",
+            "agy",
+            "--dangerously-skip-permissions",
         ])
         .status()
         .map(|s| s.success())
@@ -329,30 +329,17 @@ fn fetch_gemini() -> Option<UsageInfo> {
         return None;
     }
 
-    // Wait for input prompt ("type your message") or trust prompt ("do you trust").
-    let ready = wait_for_either(session_name, "type your message", "do you trust", 20);
-    match ready {
-        Some(1) => {}
-        Some(2) => {
-            tmux_send(session_name, &["", "Enter"]);
-            if !wait_for_pane(session_name, "type your message", 15) {
-                tmux_kill(session_name);
-                return None;
-            }
-        }
-        _ => {
-            tmux_kill(session_name);
-            return None;
-        }
+    // Wait for input prompt (">")
+    if !wait_for_pane(session_name, ">", 20) {
+        tmux_kill(session_name);
+        return None;
     }
 
-    // Send /stats — gemini needs text and Enter as separate sends.
-    tmux_send(session_name, &["/stats"]);
-    thread::sleep(Duration::from_millis(200));
-    tmux_send(session_name, &["Enter"]);
+    // Send /usage
+    tmux_send(session_name, &["/usage", "Enter"]);
 
-    // Wait for the stats table to appear.
-    if !wait_for_pane(session_name, "model usage", 10) {
+    // Wait for the stats table to appear
+    if !wait_for_pane(session_name, "GEMINI MODELS", 10) {
         tmux_kill(session_name);
         return None;
     }
@@ -365,34 +352,7 @@ fn fetch_gemini() -> Option<UsageInfo> {
 
 // ── Polling helpers ───────────────────────────────────────────────────────────
 
-/// Poll until one of two needles appears. Returns Some(1) for needle_a,
-/// Some(2) for needle_b, or None on timeout.
-fn wait_for_either(
-    session_name: &str,
-    needle_a: &str,
-    needle_b: &str,
-    timeout_secs: u64,
-) -> Option<u8> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    let a = needle_a.to_lowercase();
-    let b = needle_b.to_lowercase();
-    while std::time::Instant::now() < deadline {
-        if let Ok(out) = Command::new("tmux")
-            .args(["capture-pane", "-t", session_name, "-p"])
-            .output()
-        {
-            let content = String::from_utf8_lossy(&out.stdout).to_lowercase();
-            if content.contains(&a) {
-                return Some(1);
-            }
-            if content.contains(&b) {
-                return Some(2);
-            }
-        }
-        thread::sleep(Duration::from_millis(400));
-    }
-    None
-}
+
 
 /// Poll the pane until `needle` appears (case-insensitive).
 fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
@@ -416,67 +376,44 @@ fn wait_for_pane(session_name: &str, needle: &str, timeout_secs: u64) -> bool {
 // ── Parsers ───────────────────────────────────────────────────────────────────
 
 fn parse_gemini_output(content: &str) -> Option<UsageInfo> {
-    // Parse the /stats model table. Example line (after ANSI strip):
-    // "│  gemini-2.5-flash   -   ▬▬▬▬▬▬▬▬   0%  8:19 PM (24h)   │"
-    // Take the model with the highest usage %, carrying its reset time.
-    let mut max_pct: Option<u32> = None;
-    let mut resets_at: Option<String> = None;
+    let mut info = UsageInfo {
+        five_hour_pct: None,
+        resets_at: None,
+        weekly_pct: None,
+        weekly_resets_at: None,
+    };
 
-    for line in content.lines() {
-        let clean = strip_ansi(line.trim());
-        if !clean.contains("gemini-") {
-            continue;
-        }
-        if let Some(pct) = extract_percent(&clean) {
-            let update = match max_pct {
-                None => true,
-                Some(m) => pct > m,
-            };
-            if update {
-                max_pct = Some(pct);
-                // Extract reset time: text after "X%  " on this line.
-                resets_at = extract_text_after_percent(&clean);
+    let lines: Vec<&str> = content.lines().map(|l| l.trim()).collect();
+    for (i, line) in lines.iter().enumerate() {
+        let clean = strip_ansi(line);
+        if clean.contains("Five Hour Limit") {
+            if i + 2 < lines.len() {
+                let detail = strip_ansi(lines[i + 2]);
+                if let Some(remaining) = extract_percent(&detail) {
+                    info.five_hour_pct = Some(100_u32.saturating_sub(remaining));
+                }
+                if let Some(pos) = detail.find("Refreshes in ") {
+                    info.resets_at = Some(detail[pos + "Refreshes in ".len()..].trim().to_string());
+                }
+            }
+        } else if clean.contains("Weekly Limit") {
+            if i + 2 < lines.len() {
+                let detail = strip_ansi(lines[i + 2]);
+                if let Some(remaining) = extract_percent(&detail) {
+                    info.weekly_pct = Some(100_u32.saturating_sub(remaining));
+                }
+                if let Some(pos) = detail.find("Refreshes in ") {
+                    info.weekly_resets_at = Some(detail[pos + "Refreshes in ".len()..].trim().to_string());
+                }
             }
         }
     }
 
-    if max_pct.is_some() || resets_at.is_some() {
-        Some(UsageInfo {
-            five_hour_pct: max_pct,
-            resets_at,
-            weekly_pct: None,
-            weekly_resets_at: None,
-        })
+    if info.five_hour_pct.is_some() || info.weekly_pct.is_some() {
+        Some(info)
     } else {
         None
     }
-}
-
-/// Return the trimmed text that follows the last "X%" in `s`, stopping at box borders.
-fn extract_text_after_percent(s: &str) -> Option<String> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    let mut after_pos: Option<usize> = None;
-    while i < bytes.len() {
-        if bytes[i].is_ascii_digit() {
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            if i < bytes.len() && bytes[i] == b'%' {
-                after_pos = Some(i + 1);
-            }
-        } else {
-            i += 1;
-        }
-    }
-    after_pos.map(|pos| {
-        s[pos..]
-            .split('│') // stop at box border
-            .next()
-            .unwrap_or("")
-            .trim()
-            .to_string()
-    })
 }
 
 fn extract_percent(s: &str) -> Option<u32> {

@@ -247,7 +247,7 @@ pub fn render_account_stats(frame: &mut Frame, app: &App, area: ratatui::layout:
 
     let claude_ok = tmux::is_installed("claude");
     let codex_ok = tmux::is_installed("codex");
-    let gemini_ok = tmux::is_installed("gemini");
+    let gemini_ok = tmux::is_installed("agy");
 
     let label_style = Style::default()
         .fg(Color::DarkGray)

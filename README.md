@@ -1,6 +1,6 @@
 # recon
 
-A tmux-native dashboard for managing AI coding agent sessions (Claude Code, Codex, Gemini).
+A tmux-native dashboard for managing AI coding agent sessions (Claude Code, Codex, Gemini via Antigravity CLI).
 
 Run multiple agent sessions in tmux across different projects, then manage them all without ever leaving the terminal — see what each agent is working on, which ones need your attention, switch between them, kill or spawn new ones, and resume past sessions. All from a single keybinding.
 
@@ -98,7 +98,7 @@ recon is built around **tmux**. Each Claude Code instance runs in its own tmux s
 
 **Session matching** uses `~/.claude/sessions/{PID}.json` files that Claude Code writes, linking each process to its session ID. No `ps` parsing or CWD-based heuristics.
 
-**Usage tracking** spawns a hidden background tmux session per agent whenever a session transitions from active → idle (or on startup), runs the agent's built-in usage command (`/usage` for Claude, `/status` for Codex, `/stats` for Gemini), and parses the rate-limit percentage from the output. Results are cached and displayed in the stats bar at the bottom of both views.
+**Usage tracking** spawns a hidden background tmux session per agent whenever a session transitions from active → idle (or on startup), runs the agent's built-in usage command (`/usage` for Claude and Gemini, `/status` for Codex), and parses the rate-limit percentage from the output. Results are cached and displayed in the stats bar at the bottom of both views.
 
 ## Install
 
@@ -106,7 +106,7 @@ recon is built around **tmux**. Each Claude Code instance runs in its own tmux s
 cargo install --path .
 ```
 
-Requires tmux and at least one supported agent: [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Gemini CLI](https://github.com/google-gemini/gemini-cli).
+Requires tmux and at least one supported agent: [Claude Code](https://claude.ai/claude-code), [Codex](https://github.com/openai/codex), or [Antigravity CLI](https://github.com/google-gemini/antigravity-cli).
 
 ## Usage
 

@@ -1485,7 +1485,7 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
     if command == "codex" {
         return Some("codex");
     }
-    if command == "gemini" {
+    if command == "gemini" || command == "agy" {
         return Some("gemini");
     }
     if command == "opencode" {
@@ -1512,7 +1512,7 @@ fn classify_pane_process(command: &str, args: Option<&str>) -> Option<&'static s
         if binary == "claude" {
             return Some("claude");
         }
-        if binary == "gemini" {
+        if binary == "gemini" || binary == "agy" {
             return Some("gemini");
         }
         if binary == "opencode" {
